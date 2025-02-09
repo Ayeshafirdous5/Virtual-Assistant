@@ -1,7 +1,7 @@
 import requests
 
 
-api_address=("https://api.openweathermap.org/data/2.5/weather?q=Hyderabad&appid=565c19b515c6b7195e25d8f311bbfb68")
+api_address=("YOUR API KEY")
 json_data=requests.get(api_address).json()
 
 def temp():
