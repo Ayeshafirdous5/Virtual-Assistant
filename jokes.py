@@ -1,7 +1,7 @@
 import requests
 
 
-url="https://official-joke-api.appspot.com/random_joke"
+url="YOUR API KEY"
 json_data=requests.get(url).json()
 
 arr=["",""]
