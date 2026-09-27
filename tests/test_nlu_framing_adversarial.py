@@ -43,12 +43,15 @@ from tests.nlu_framing_adversarial_corpus import (
 #:
 #: Step 5 recognised a trailing question so it outranks the narrative
 #: guard, which fixed the two blocked commands without editing a single
-#: corpus expectation: 40 of 46 became 42 of 46.
-RECORDED_ACCURACY = 0.9130434782608695
+#: corpus expectation: 40 of 46 became 42 of 46. Step 7's reported-"tell"
+#: guard then closed the one live gap that remained, taking it to 43.
+RECORDED_ACCURACY = 0.9347826086956522
 
 #: Mismatch counts measured at the same time, pinned for the same reason.
-#: The four let-throughs are unchanged by Step 5; the two blocks are gone.
-RECORDED_LEAKING = 4
+#: The four let-throughs became three, and all three are the negated
+#: requests the NLU negation guard already stops upstream. Step 7 removed
+#: the last live gap, so nothing that reaches a tool is left unattested.
+RECORDED_LEAKING = 3
 RECORDED_BLOCKING = 0
 
 

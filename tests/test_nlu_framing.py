@@ -582,3 +582,226 @@ class TestTrailingQuestions:
             normalize("we discussed the weather, what is it now").tokens
         ) is True
 
+
+# ----------------------------------------------------------------------
+# The reported-"tell" guard (Step 7)
+# ----------------------------------------------------------------------
+class TestReportedTellGuard:
+    """``tell`` is a request cue *and* an ordinary reporting verb.
+
+    The cue is what carries "tell me a joke", and it is also what made
+    eight reporting sentences look like requests. This guard vetoes the
+    cue only where the structure says the sentence is describing an
+    event, and it is the reason the tell corpus sits at 55 of 57.
+    """
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # Pattern 1: a perception verb, its subject, then "tell".
+            ("I heard you tell a joke", "jokes"),
+            ("I heard him tell a joke", "jokes"),
+            ("I heard her tell the news", "news"),
+            ("I saw you tell a joke", "jokes"),
+            ("I saw him tell the news", "news"),
+            # Pattern 3: a first-position subject, "tell", and a frequency.
+            ("I tell you a joke every morning", "jokes"),
+            ("you tell me that every day", "jokes"),
+            # Pattern 2: a reported command, "to tell".
+            ("he told me to tell you a joke", "jokes"),
+        ],
+    )
+    def test_the_eight_cue_leaks_are_mentions(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("I heard you tell a joke", "jokes"),
+            ("I heard him tell a joke", "jokes"),
+            ("I saw you tell a joke", "jokes"),
+            ("he told me to tell you a joke", "jokes"),
+        ],
+    )
+    def test_the_closed_gap_runs_no_tool(self, quiet, router, lexicon, utterance, intent):
+        resolution = resolve_detail(quiet, router, utterance, lexicon)
+        assert resolution.tool is None, utterance
+        assert resolution.framing == framing.MENTION
+
+    def test_a_habitual_with_no_trigger_word_never_matches_at_all(
+        self, quiet, router, lexicon
+    ):
+        """"you tell me that every day" names no trigger, so it stops earlier.
+
+        Worth its own test because it would be easy to assume the guard
+        did the work. It did not: the parser finds nothing to look up, so
+        framing is never consulted and the answer is ``no-match``. The
+        guard still judges the sentence correctly, which the framing test
+        above covers; this one is about the pipeline as a whole.
+        """
+        resolution = resolve_detail(
+            quiet, router, "you tell me that every day", lexicon
+        )
+        assert resolution.parsed is None
+        assert resolution.framing == ""
+        assert resolution.tool is None
+        assert resolution.status == "no-match"
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("tell me a joke", "jokes"),
+            ("tell me the news", "news"),
+            ("tell me about the weather", "weather"),
+            ("can you tell me a joke?", "jokes"),
+            ("please tell me the news", "news"),
+            ("tell me what you heard", "news"),
+            ("tell me about Python", "information"),
+            ("tell me a joke please", "jokes"),
+            ("tell me what's on the news", "news"),
+            ("tell me again", "jokes"),
+        ],
+    )
+    def test_genuine_tell_requests_are_untouched(self, utterance, intent):
+        """Requirement 1: the cue is the whole point of these sentences."""
+        assert verdict(utterance, intent) == framing.REQUEST
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("what did I tell you earlier?", "history"),
+            ("what did she tell you?", "news"),
+            ("did he tell you the news?", "news"),
+            ("did you hear me tell the news?", "news"),
+            ("when did I tell you that?", "history"),
+            ("did I tell you about the weather?", "weather"),
+            ("who told you the news?", "news"),
+            ("have I told you about this?", "history"),
+            ("can you tell me a joke?", "jokes"),
+            ("would you tell me the news?", "news"),
+            ("could you tell me a joke, please?", "jokes"),
+        ],
+    )
+    def test_questions_about_past_events_still_work(self, utterance, intent):
+        """Requirement 2: a question outranks a reporting verb."""
+        assert verdict(utterance, intent) == framing.REQUEST
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("I heard you tell a joke, tell me another one", "jokes"),
+            ("she told me the news, now tell me today's news", "news"),
+            ("I heard you tell that story, can you tell it again?", "jokes"),
+            ("you told me a joke earlier, tell me another", "jokes"),
+            ("I heard him tell a joke, do you have another one?", "jokes"),
+            ("my friend told me a joke, tell me a better one", "jokes"),
+        ],
+    )
+    def test_a_request_after_narrative_context_survives(self, utterance, intent):
+        """Requirement 4: only the reporting "tell" is vetoed.
+
+        "I heard him tell a joke, do you have another one?" is the sharp
+        one: its only "tell" is the reporting one, and it is still a
+        request because the second half is a question.
+        """
+        assert verdict(utterance, intent) == framing.REQUEST
+
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # Past "told" and the copula rules were already correct, and
+            # must stay correct while the "tell" guard is in place.
+            ("he told me a joke", "jokes"),
+            ("my friend told me a joke", "jokes"),
+            ("I saw the joke you told me", "jokes"),
+            ("we talked about what he told me", "jokes"),
+            ("I heard the news you told me about", "news"),
+            ("she told me the weather was cold", "weather"),
+        ],
+    )
+    def test_nearby_narrative_cases_are_still_mentions(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # "tells" and "telling" are in neither verb list. They are
+            # measured as leaks and are deliberately not touched here,
+            # so they keep falling through to neutral, as in Step 6.
+            ("my brother tells me jokes", "jokes"),
+            ("I remember you telling me a joke", "jokes"),
+        ],
+    )
+    def test_the_two_fallthroughs_are_left_untouched(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.NEUTRAL
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("tell me", "jokes"),
+            ("I want to tell you a joke", "jokes"),
+            ("I need to tell you something", "news"),
+            ("tell me about the history", "history"),
+            ("tell me the weather", "weather"),
+            ("tell me what time it is", "system"),
+        ],
+    )
+    def test_nearby_request_cases_are_unchanged(self, utterance, intent):
+        """The guard is narrow: a "tell" that is not reporting is a cue."""
+        assert verdict(utterance, intent) != framing.MENTION
+
+    def test_a_pronoun_before_tell_is_not_enough(self):
+        """Requirement 6, asserted directly.
+
+        Every sentence below has a pronoun immediately before "tell" and
+        none of them is reported speech. A rule of the shape "pronoun
+        before tell -> MENTION" would break all of them, which is why
+        every branch of the guard needs a second, independent mark.
+        """
+        for utterance in (
+            "can you tell me a joke?",
+            "what did she tell you?",
+            "did he tell you the news?",
+            "tell me a joke",
+        ):
+            tokens = normalize(utterance).tokens
+            index = tokens.index("tell")
+            assert index == 0 or tokens[index - 1] in framing.INVERTED_SUBJECTS
+            assert framing._reports_speech(tokens, index) is False, utterance
+
+    def test_the_guard_only_ever_looks_at_tell(self):
+        """No other request cue can be vetoed by this rule."""
+        for token in sorted(framing.REQUEST_CUES - {"tell"}):
+            assert not framing._reports_speech((token,), 0), token
+
+    def test_tell_is_still_a_request_cue(self):
+        """Requirement 5: the cue was narrowed per occurrence, not removed."""
+        assert "tell" in framing.REQUEST_CUES
+        assert verdict("tell me a joke", "jokes") == framing.REQUEST
+
+    def test_the_narrative_verb_list_is_unchanged(self):
+        """This step vetoes the cue; it does not extend the verb list."""
+        assert framing.NARRATIVE_VERBS == frozenset(
+            {
+                "mentioned", "heard", "told", "discussed", "chatted", "talked",
+                "reported", "announced", "explained", "confirmed", "commented",
+            }
+        )
+        for word in ("tells", "telling", "saw", "remember", "ask"):
+            assert word not in framing.NARRATIVE_VERBS
+
+    def test_a_reported_infinitive_needs_a_reporting_verb(self):
+        """"I want to tell you a joke" shares the shape and is spared."""
+        tokens = normalize("I want to tell you a joke").tokens
+        index = tokens.index("tell")
+        assert tokens[index - 1] == "to"
+        assert framing._reports_speech(tokens, index) is False
+
+    def test_a_habitual_needs_a_first_position_subject(self):
+        """"tell me a joke every day" is a request, not a habit statement."""
+        tokens = normalize("tell me a joke every day").tokens
+        assert tokens[0] == "tell"
+        assert framing._reports_speech(tokens, 0) is False
+        assert verdict("tell me a joke every day", "jokes") == framing.REQUEST
+

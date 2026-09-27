@@ -151,6 +151,48 @@ INTENT_RULES: dict[str, frozenset[str]] = {
 #: looking for the first meaningful word.
 FILLER_OPENERS = frozenset({"please", "pls", "so", "ok", "okay", "hey", "now"})
 
+# ----------------------------------------------------------------------
+# The reported-"tell" guard
+# ----------------------------------------------------------------------
+#: ``tell`` is a request cue, so it is a request wherever it appears. That
+#: is what carries "tell me a joke", and it is also what made these eight
+#: sentences look like requests when they are only reporting speech:
+#:
+#:     I heard you tell a joke          I heard him tell a joke
+#:     I heard her tell the news        I saw you tell a joke
+#:     I saw him tell the news          I tell you a joke every morning
+#:     you tell me that every day       he told me to tell you a joke
+#:
+#: Each of those has a **structural** mark that a genuine request never
+#: has, and that is the only thing this guard looks at. It never counts a
+#: bare "tell", and it never guesses from position alone.
+PERCEPTION_VERBS = frozenset({"heard", "saw"})
+
+#: Subjects that can be the one "telling" after a perception verb.
+#:
+#: Deliberately absent is **"me"**: "did you hear me tell the news?" is a
+#: genuine question, and the question rule must be free to win. The
+#: plural and reflexive subjects are unlisted because no case in the tell
+#: corpus attests them, and an unattested subject is a guess.
+REPORTED_SUBJECTS = frozenset({"you", "him", "her"})
+
+#: Verbs that take a "to"-infinitive reporting a command that was given.
+#: "told" is the member the corpus attests; "asked" takes the same
+#: complement and is listed for the same reason.
+REPORTING_VERBS = frozenset({"told", "asked"})
+
+#: A subject in first position makes the sentence declarative, so "tell"
+#: is no longer the imperative. This is what separates "you tell me that
+#: every day" from "tell me the news".
+DECLARATIVE_SUBJECTS = frozenset({"i", "you"})
+
+#: Frequency words. A subject plus "tell" is only clear evidence when it
+#: also describes a habit, which is what the two attested declarative
+#: cases have in common. A bare "I tell you a joke" carries no such
+#: evidence and is therefore left exactly as it is today.
+HABITUAL_MARKERS = frozenset({"every", "always", "usually", "often", "sometimes"})
+
+
 #: Past-tense verbs of speech, information transfer and discussion.
 #:
 #: Every entry is unambiguously past, so a sentence containing one is
@@ -168,7 +210,10 @@ FILLER_OPENERS = frozenset({"please", "pls", "so", "ok", "okay", "hey", "now"})
 #: * **"read"** is absent, because "can you read my history" is a genuine
 #:   command.
 #: * **"say"** is absent, because "what did I say" is the history alias.
-#: * **"tell"** is a request cue and is handled much earlier.
+#: * **"tell"** is absent, because it is a request cue. It is also a
+#:   reporting verb, so the request cue is *vetoed* where the structure
+#:   says the sentence is reporting speech; see
+#:   :func:`_reports_speech`.
 #:
 #: Past time expressions such as "earlier", "yesterday" and "this morning"
 #: were evaluated as a signal on their own and **rejected**. A bare
@@ -237,6 +282,64 @@ def _has_trailing_question(tokens: tuple[str, ...]) -> bool:
     return False
 
 
+def _reports_speech(tokens: tuple[str, ...], index: int) -> bool:
+    """True when the ``tell`` at ``index`` reports speech instead of asking.
+
+    This is a **veto on one request cue**, never a rule of its own. It
+    answers a single question: is this particular "tell" describing an
+    event that already happened? If the answer is not clearly yes, this
+    returns ``False`` and the cue counts exactly as it did before.
+
+    Three structures, each taken from a case the tell corpus measures as
+    wrong, and each absent from every case it measures as right:
+
+    1. a perception verb and its subject, then "tell"
+       ("I heard you tell a joke", "I saw him tell the news")
+    2. a reporting verb, then a "to"-infinitive containing "tell"
+       ("he told me to tell you a joke")
+    3. a subject in first position, then "tell", then a frequency word
+       ("I tell you a joke every morning")
+
+    What is deliberately *not* here matters as much. A pronoun before
+    "tell" proves nothing: "can you tell me a joke?" has one, and so does
+    "what did she tell you?". Neither is reported speech, and both must
+    keep working, so no rule of that shape can exist. That is why each
+    branch needs a second, independent mark before it will fire.
+    """
+    if tokens[index] != "tell":
+        return False
+
+    # 1. Reported perception: "I heard you tell a joke".
+    if (
+        index >= 2
+        and tokens[index - 2] in PERCEPTION_VERBS
+        and tokens[index - 1] in REPORTED_SUBJECTS
+    ):
+        return True
+
+    # 2. A command that was reported rather than given: "he told me to
+    #    tell you a joke". The reporting verb has to be there; "I want to
+    #    tell you a joke" has the same infinitive and is left alone.
+    if (
+        index >= 2
+        and tokens[index - 1] == "to"
+        and any(token in REPORTING_VERBS for token in tokens[: index - 1])
+    ):
+        return True
+
+    # 3. A habitual statement rather than an order: "you tell me that
+    #    every day". A first-position subject makes the clause
+    #    declarative, and the frequency word is the second mark.
+    if (
+        index == 1
+        and tokens[0] in DECLARATIVE_SUBJECTS
+        and any(token in HABITUAL_MARKERS for token in tokens)
+    ):
+        return True
+
+    return False
+
+
 def assess(normalized: Normalized, intent: str) -> str:
     """Judge whether ``intent`` is being requested or merely mentioned.
 
@@ -259,12 +362,30 @@ def assess(normalized: Normalized, intent: str) -> str:
     #    weather, what is it now"). The remark rules below all sit after
     #    this one, which is what keeps an explicit ask from being talked
     #    out of running.
-    if any(token in REQUEST_CUES for token in tokens):
+    #
+    #    "tell" is the one cue a reported-speech construction can veto,
+    #    because it is the one cue that is also an ordinary reporting verb.
+    #    Every other cue, and the question rules, are untouched.
+    if any(
+        token in REQUEST_CUES and not _reports_speech(tokens, index)
+        for index, token in enumerate(tokens)
+    ):
         return REQUEST
     if _opens_a_question(tokens):
         return REQUEST
     if _has_trailing_question(tokens):
         return REQUEST
+
+    # 1b. The vetoed "tell" is now the only evidence left, and it is
+    #     positive evidence of a remark, so it decides here. Placed after
+    #     the question rules on purpose: "did you hear me tell the news?"
+    #     and "I heard you tell a joke, do you have another one?" are both
+    #     still questions, and a question outranks a reporting verb.
+    if any(
+        token == "tell" and _reports_speech(tokens, index)
+        for index, token in enumerate(tokens)
+    ):
+        return MENTION
 
     # 2. Hedging marks a remark.
     if any(token in HEDGE_CUES for token in tokens):
