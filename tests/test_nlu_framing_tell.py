@@ -52,7 +52,7 @@ from assistant.nlu import framing
 from assistant.nlu.normalize import normalize
 from tests.nlu_framing_tell_corpus import (
     CATEGORIES,
-    CATEGORY_SUBJECT,
+    CATEGORY_NARRATIVE,
     CATEGORY_TRAP,
     CORPUS,
     REQUEST,
@@ -69,37 +69,31 @@ RECORDED_CORPUS_SIZE = 57
 #: ``framing.py`` has to move it deliberately.
 #:
 #: Step 7's reported-"tell" guard closed all eight cue leaks, taking the
-#: corpus from 47 of 57 to 55 of 57. No expectation was edited to get
-#: there: the same ten sentences that were mislabelled before are the
-#: only ones left, and they are the two that were never a "tell" problem.
-RECORDED_ACCURACY = 0.9649122807017544
+#: corpus from 47 of 57 to 55 of 57. Step 9's declarative-"tells" guard
+#: then closed one of the two fall-throughs as well, taking it to 56.
+#: No expectation was edited to get there.
+RECORDED_ACCURACY = 0.9824561403508771
 
 #: Mismatch counts measured at the same time, pinned for the same reason.
-#: Two remarks reach a tool and no command is blocked.
-RECORDED_LEAKING = 2
+#: One remark reaches a tool and no command is blocked.
+RECORDED_LEAKING = 1
 RECORDED_BLOCKING = 0
 RECORDED_WRONG = 0
 
 #: The leak breakdown, which is the point of running this study. Step 7
-#: removed the cue leaks entirely; the two that remain are the
-#: fall-throughs, which no change to "tell" alone could ever reach,
-#: because neither sentence contains the cue in the first place.
+#: removed the cue leaks entirely. Step 9 closed "my brother tells me
+#: jokes", so the one that remains is the gerund, which no change to
+#: "tell" or "tells" could ever reach.
 RECORDED_LEAKING_FROM_CUE = 0
-RECORDED_LEAKING_FALLTHROUGH = 2
+RECORDED_LEAKING_FALLTHROUGH = 1
 
-#: The two fall-throughs, named so they stay visible rather than being
-#: mistaken for part of the "tell" problem. Both are out of scope for
-#: Step 7 by instruction, and both are measured here every run.
-#:
-#: Neither is a false block. "tells" and "telling" are in neither
-#: :data:`REQUEST_CUES` nor :data:`NARRATIVE_VERBS`, so framing has no
-#: opinion at all and returns :data:`NEUTRAL`, which still runs the
-#: command. They are a missing-narrative-verb question, not a "tell"
-#: one, and they need a different change entirely.
-REMAINING_FALLTHROUGH = (
-    "my brother tells me jokes",
-    "I remember you telling me a joke",
-)
+#: The one fall-through left, named so it stays visible rather than being
+#: mistaken for a problem with the request cue. It is not a false block.
+#: "telling" is in neither :data:`REQUEST_CUES` nor
+#: :data:`NARRATIVE_VERBS`, so framing has no opinion and returns
+#: :data:`NEUTRAL`, which still runs the command. Closing it means
+#: deciding what the gerund is, and that is its own step.
+REMAINING_FALLTHROUGH = ("I remember you telling me a joke",)
 
 #: The gap this study set out to close, recorded as closed. Step 6 named
 #: it and Step 7 fixed it, so the test below asserts it stays fixed.
@@ -467,25 +461,25 @@ class TestMeasurement:
         assert remaining == sorted(REMAINING_FALLTHROUGH)
 
     def test_the_fallthroughs_are_unrelated_to_tell(self):
-        """Why they are out of scope: the cue is not in either sentence.
+        """Why the survivor is out of scope: the cue is not in the sentence.
 
-        "my brother tells me jokes" is a leak because "tells" is in
-        neither list, and "I remember you telling me a joke" because
-        "telling" and "remember" are in neither. A guard on "tell"
-        therefore cannot reach them, and must not pretend to.
+        "I remember you telling me a joke" is a leak because "telling"
+        is in neither list, so no change to "tell" or "tells" could ever
+        reach it. Asserted so a future step cannot claim it by accident.
         """
         for utterance in REMAINING_FALLTHROUGH:
             tokens = normalize(utterance).tokens
             assert "tell" not in tokens, utterance
         assert verdict_of(REMAINING_FALLTHROUGH[0], "jokes") == framing.NEUTRAL
-        assert verdict_of(REMAINING_FALLTHROUGH[1], "jokes") == framing.NEUTRAL
 
     def test_the_remaining_leaks_are_in_the_documented_categories(self):
-        """Both sit in the categories that do not use the cue."""
-        assert {m.case.category for m in mismatches()} == {
-            CATEGORY_SUBJECT,
-            CATEGORY_TRAP,
-        }
+        """The survivor is the gerund, filed as a lexical trap.
+
+        "I remember you telling me a joke" was recorded in this corpus
+        as a trap rather than a plain narrative, because the interesting
+        part is the form "telling" and not the recall verb.
+        """
+        assert {m.case.category for m in mismatches()} == {CATEGORY_TRAP}
 
     def test_genuine_requests_are_never_blocked_today(self):
         """Every case that should run is running. The danger is the reverse."""

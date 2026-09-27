@@ -69,25 +69,35 @@ RECORDED_CORPUS_SIZE = 49
 #: Framing accuracy measured when this corpus was first run, against the
 #: rules as they stand at the end of Phase 5 Step 7. Pinned so a later
 #: change to ``framing.py`` has to move it deliberately.
-RECORDED_ACCURACY = 0.7142857142857143
+#:
+#: Step 9's declarative-"tells" guard took this from 35 of 49 to 42 of 49.
+#: No label was edited to get there. The one framing leak left is
+#: "I remember you telling me a joke", which is the gerund and was
+#: explicitly out of scope.
+RECORDED_ACCURACY = 0.8571428571428571
 
-#: Framing mismatch counts, pinned for the same reason. Twelve are
-#: let-throughs and two are wrong labels, and nothing is blocked: no
+#: Framing mismatch counts, pinned for the same reason. Five are
+#: let-throughs, two are wrong labels, and nothing is blocked: no
 #: command is stopped that should run.
-RECORDED_LEAKING = 12
+RECORDED_LEAKING = 5
 RECORDED_BLOCKING = 0
 RECORDED_WRONG = 2
 
-#: How many of those fourteen the parser actually reaches. The other
+#: How many of the seven framing was actually asked about. The other
 #: :data:`RECORDED_NEVER_REACHED` name no trigger word, so the parser
-#: returns ``None`` and framing is never consulted. Pinned separately
-#: because these are a parser-layer problem, not a framing one.
-RECORDED_LEAKING_REACHED = 6
-RECORDED_NEVER_REACHED = 8
+#: returns ``None`` and framing is never consulted. Step 9 cut the
+#: framing group from six to one, and could not touch the parser group,
+#: which is exactly the split this module exists to keep visible.
+RECORDED_LEAKING_REACHED = 1
+RECORDED_NEVER_REACHED = 6
 
 #: The two leaks that are *not* leaks. Both are labelled REQUEST and both
 #: come back neutral, so they are wrong labels rather than let-throughs.
 RECORDED_WRONG_UNREACHED = 2
+
+#: The one framing leak Step 9 was not allowed to fix, named so it stays
+#: visible. "telling" is the gerund and needs its own decision.
+REMAINING_FRAMING_LEAK = "I remember you telling me a joke"
 
 #: Cases whose verb form is the point of the case, named so a future
 #: step cannot describe the corpus as being about "tell" alone.
@@ -491,10 +501,25 @@ class TestMeasurement:
         assert all(item.is_parser_issue for item in wrong)
 
     def test_the_two_surviving_tell_corpus_leaks_are_here(self):
-        """The Step 7 fall-throughs are the reason this corpus exists."""
+        """Both Step 7 fall-throughs started this corpus, and only one
+        of them is still a framing leak.
+
+        "my brother tells me jokes" was closed by Step 9's declarative
+        guard. "I remember you telling me a joke" is the gerund and was
+        left alone on purpose.
+        """
         utterances = {c.utterance for c in CORPUS}
         assert "my brother tells me jokes" in utterances
-        assert "I remember you telling me a joke" in utterances
+        assert REMAINING_FRAMING_LEAK in utterances
+
+    def test_the_one_remaining_framing_leak_is_the_gerund(self):
+        """Step 9 was scoped to "tells" and must not have touched this."""
+        assert [m.case.utterance for m in framing_issues()] == [
+            REMAINING_FRAMING_LEAK
+        ]
+        assert framing_verdict(
+            next(c for c in CORPUS if c.utterance == REMAINING_FRAMING_LEAK)
+        ) == framing.NEUTRAL
 
     def test_a_parser_gap_is_never_called_fixed(self):
         """The distinction this step exists to protect.

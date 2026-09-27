@@ -726,10 +726,21 @@ class TestReportedTellGuard:
     @pytest.mark.parametrize(
         "utterance,intent",
         [
-            # "tells" and "telling" are in neither verb list. They are
-            # measured as leaks and are deliberately not touched here,
-            # so they keep falling through to neutral, as in Step 6.
+            # "my brother tells me jokes" is no longer a fall-through.
+            # Step 9's declarative guard closed it, and it is asserted as
+            # a mention in TestDeclaresTellsGuard below.
             ("my brother tells me jokes", "jokes"),
+        ],
+    )
+    def test_tells_is_no_longer_a_fallthrough(self, utterance, intent):
+        """Step 9 closed this one; the gerund below is what is left."""
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # "telling" is in neither list and was explicitly left out of
+            # Step 9, so this must not move.
             ("I remember you telling me a joke", "jokes"),
         ],
     )
@@ -804,4 +815,162 @@ class TestReportedTellGuard:
         assert tokens[0] == "tell"
         assert framing._reports_speech(tokens, 0) is False
         assert verdict("tell me a joke every day", "jokes") == framing.REQUEST
+
+
+# ----------------------------------------------------------------------
+# The declarative-"tells" guard (Step 9)
+# ----------------------------------------------------------------------
+class TestDeclaresTellsGuard:
+    """``tells`` is in neither verb list, and used to fall through.
+
+    It is the present third person of a verb the layer already reads as
+    a remark in the past, so "she tells me the news" is a statement about
+    speech. The guard keys on **a subject in front of the verb**, which
+    an English order to the assistant never has.
+    """
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # The five cases Step 8 measured as genuine framing leaks.
+            ("my brother tells me jokes", "jokes"),
+            ("she tells me the news", "news"),
+            ("my friend tells me about the weather", "weather"),
+            ("my dad tells me the same joke daily", "jokes"),
+            ("the teacher tells us the weather", "weather"),
+        ],
+    )
+    def test_the_five_target_cases_are_mentions(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # More of the same shape, from the verb-form corpus.
+            ("he tells everyone the story", "jokes"),
+            ("she tells me what she had for lunch", "jokes"),
+            ("he tells me the weather is fine", "weather"),
+            ("it tells you nothing", "news"),
+            ("my cat tells me about the weather", "weather"),
+            ("the sign tells you the weather", "weather"),
+        ],
+    )
+    def test_more_third_person_tells_are_mentions(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # A request cue outranks the declarative subject.
+            ("my brother tells me jokes, tell me one too", "jokes"),
+            ("he tells me the weather, check it for me", "weather"),
+            ("she tells me the news, show me the headlines", "news"),
+            # A question outranks it too.
+            ("who tells you the weather?", "weather"),
+            ("does he tell me the news?", "news"),
+        ],
+    )
+    def test_a_request_or_question_beats_the_subject(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.REQUEST
+
+    def test_the_copula_also_catches_these(self):
+        """A declarative about the weather is a remark twice over.
+
+        "he tells me the weather is fine" has both the subject that this
+        step added and the copula that was always there, so it is worth
+        pinning that the older rule still fires on its own.
+        """
+        tokens = normalize("he tells me the weather is fine").tokens
+        assert framing._declares_habit(tokens) is True
+        assert any(token in framing.COPULA_CUES for token in tokens)
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("tell me a joke", "jokes"),
+            ("tell me the news", "news"),
+            ("can you tell me a joke?", "jokes"),
+            ("please tell me the news", "news"),
+            ("tell me what you heard", "news"),
+            ("what did she tell you?", "news"),
+            ("did he tell you the news?", "news"),
+            ("who told you the news?", "news"),
+        ],
+    )
+    def test_genuine_requests_are_never_blocked(self, utterance, intent):
+        """The rule reads "tells" only, so the bare cue is untouched."""
+        assert verdict(utterance, intent) == framing.REQUEST
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("tells", "jokes"),
+            ("the news", "news"),
+            ("weather", "weather"),
+            ("a joke", "jokes"),
+            ("some music", "youtube"),
+        ],
+    )
+    def test_fragments_are_still_neutral(self, utterance, intent):
+        """A bare "tells" has nothing in front of it, so it cannot match."""
+        assert verdict(utterance, intent) == framing.NEUTRAL
+
+
+    def test_tells_alone_is_not_enough(self):
+        """Requirement: the word must not be sufficient on its own.
+
+        Each of these has "tells" and no subject in front of it, so
+        nothing about the rule fires and the sentence is left exactly as
+        it was before this step.
+        """
+        for utterance in (
+            "tells me a joke",
+            "tells the news",
+            "i tells me jokes",
+            "you tells me jokes",
+        ):
+            tokens = normalize(utterance).tokens
+            assert framing._declares_habit(tokens) is False, utterance
+            assert verdict(utterance, "jokes") == framing.NEUTRAL
+
+    def test_only_the_literal_form_is_matched(self):
+        """No stemming: nothing ending in "-s" is inferred."""
+        for utterance in ("shout", "yells", "sells", "calls", "brings"):
+            tokens = normalize(utterance).tokens
+            assert framing._declares_habit(tokens) is False, utterance
+
+    def test_the_search_does_not_cross_a_phrase_break(self):
+        """A determiner in an earlier phrase is not a subject."""
+        for utterance in (
+            "a joke about my brother tells",
+            "read the news about my dad tells",
+        ):
+            tokens = normalize(utterance).tokens
+            assert framing._declares_habit(tokens) is False, utterance
+
+    def test_interrogatives_are_not_treated_as_subjects(self):
+        """"who tells you the weather?" must stay a question."""
+        for word in ("who", "what", "when", "where", "why", "how"):
+            assert word not in framing.TELLS_SUBJECT_DETERMINERS
+            assert word not in framing.TELLS_SUBJECT_PRONOUNS
+        assert framing._declares_habit(
+            normalize("who tells you the weather").tokens
+        ) is False
+
+    def test_the_verb_lists_are_unchanged(self):
+        """The form is handled by a rule, not by editing the lists."""
+        assert "tells" not in framing.REQUEST_CUES
+        assert "tells" not in framing.NARRATIVE_VERBS
+        assert "telling" not in framing.NARRATIVE_VERBS
+        assert framing.NARRATIVE_VERBS == frozenset(
+            {
+                "mentioned", "heard", "told", "discussed", "chatted", "talked",
+                "reported", "announced", "explained", "confirmed", "commented",
+            }
+        )
+
+    def test_telling_was_left_untouched_on_purpose(self):
+        """The gerund is out of scope for this step and must not move."""
+        assert verdict("I remember you telling me a joke", "jokes") == framing.NEUTRAL
+        assert verdict("you were telling me a joke", "jokes") == framing.MENTION
 

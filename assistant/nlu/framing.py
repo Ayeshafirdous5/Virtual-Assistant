@@ -192,6 +192,48 @@ DECLARATIVE_SUBJECTS = frozenset({"i", "you"})
 #: evidence and is therefore left exactly as it is today.
 HABITUAL_MARKERS = frozenset({"every", "always", "usually", "often", "sometimes"})
 
+# ----------------------------------------------------------------------
+# The declarative-"tells" guard
+# ----------------------------------------------------------------------
+#: "tells" is the present third person of a verb the layer already reads
+#: as a remark in the past ("told" is in :data:`NARRATIVE_VERBS`), yet it
+#: sits in neither list, so framing has no opinion and returns
+#: :data:`NEUTRAL`. These are the sentences that fall through:
+#:
+#:     my brother tells me jokes          she tells me the news
+#:     my friend tells me about the weather
+#:     my dad tells me the same joke daily
+#:     the teacher tells us the weather
+#:
+#: What marks them is not the word "tells" but the **subject in front of
+#: it**. An English imperative to the assistant is the bare "tell", with
+#: no subject, so a third person subject before "tells" is positive
+#: evidence of a declaration rather than an order.
+TELLS_SUBJECT_PRONOUNS = frozenset({"he", "she", "it", "they"})
+
+#: Determiners and possessives that can open the subject noun phrase in
+#: front of "tells": "my brother", "the teacher".
+#:
+#: Deliberately absent are the interrogatives. "who tells you the
+#: weather?" has a word in front of "tells" too, but it asks something,
+#: and the question rules must be free to win.
+TELLS_SUBJECT_DETERMINERS = frozenset(
+    {"my", "the", "his", "her", "its", "their", "our", "this", "that", "a", "an"}
+)
+
+#: Words that end a subject noun phrase. If one of these is between a
+#: determiner and "tells", the determiner belongs to an earlier phrase
+#: and there is no subject in front of the verb.
+TELLS_PHRASE_BREAKS = frozenset(
+    {"of", "about", "to", "and", "or", "but", "for", "with", "from", "at", "in", "on"}
+)
+
+#: How many tokens may sit between a determiner and "tells". Covers
+#: "my brother tells" and "the head teacher tells" without reaching back
+#: into an unrelated clause.
+TELLS_SUBJECT_SPAN = 3
+
+
 
 #: Past-tense verbs of speech, information transfer and discussion.
 #:
@@ -340,6 +382,48 @@ def _reports_speech(tokens: tuple[str, ...], index: int) -> bool:
     return False
 
 
+def _declares_habit(tokens: tuple[str, ...]) -> bool:
+    """True when a declarative third-person "tells" heads the sentence.
+
+    "tells" is the only form handled here, matched as a closed literal.
+    Nothing is stemmed and nothing ends in "-s" is inferred, because
+    "tells" is the one form the measurement actually showed to fall
+    through.
+
+    The test is **a subject in front of the verb**, which is what an
+    English order to the assistant never has:
+
+        "she tells me the news"      a pronoun subject
+        "my brother tells me jokes"  a determiner-headed subject
+        "tell me a joke"             no subject, so no match
+        "tells"                      nothing in front, so no match
+
+    Two guards keep it honest. The search never crosses a request cue, an
+    interrogative or a preposition, so it cannot reach back into a
+    previous clause and mistake its determiner for a subject. And
+    interrogatives are excluded from the subject sets, so "who tells you
+    the weather?" is left to the question rules.
+    """
+    for index, token in enumerate(tokens):
+        if token != "tells" or index == 0:
+            continue
+        if tokens[index - 1] in TELLS_SUBJECT_PRONOUNS:
+            return True
+        # Walk back over a short subject noun phrase looking for the
+        # determiner that opened it, stopping at anything that ends one.
+        for start in range(max(0, index - TELLS_SUBJECT_SPAN), index):
+            if any(
+                word in REQUEST_CUES
+                or word in INTERROGATIVE
+                or word in TELLS_PHRASE_BREAKS
+                for word in tokens[start:index]
+            ):
+                break
+            if tokens[start] in TELLS_SUBJECT_DETERMINERS:
+                return True
+    return False
+
+
 def assess(normalized: Normalized, intent: str) -> str:
     """Judge whether ``intent`` is being requested or merely mentioned.
 
@@ -406,6 +490,16 @@ def assess(normalized: Normalized, intent: str) -> str:
     #    purpose: it can only turn a "no opinion" into a remark, so it can
     #    never override a request cue or a question above.
     if any(token in NARRATIVE_VERBS for token in tokens):
+        return MENTION
+
+    # 5b. A declarative third-person "tells", which is in neither verb list
+    #     and so used to fall through to neutral. Last of the remark rules
+    #     for the same reason as rule 5: everything above it has already
+    #     had its chance, so this can only turn a "no opinion" into a
+    #     remark. A question or a request cue always wins first, which is
+    #     what keeps "who tells you the weather?" and "my brother tells
+    #     me jokes, tell me one too" working.
+    if _declares_habit(tokens):
         return MENTION
 
     # 6. Nothing conclusive. Proceed: a bare command such as "weather" or
