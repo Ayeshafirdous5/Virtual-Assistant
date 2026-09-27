@@ -726,25 +726,28 @@ class TestReportedTellGuard:
     @pytest.mark.parametrize(
         "utterance,intent",
         [
-            # "my brother tells me jokes" is no longer a fall-through.
-            # Step 9's declarative guard closed it, and it is asserted as
-            # a mention in TestDeclaresTellsGuard below.
-            ("my brother tells me jokes", "jokes"),
+            # "telling" is in neither verb list, and the Step 9 guard only
+            # ever read "tells". Step 11 added a separate recall rule, so
+            # this sentence is no longer a fall-through.
+            ("I remember you telling me a joke", "jokes"),
         ],
     )
     def test_tells_is_no_longer_a_fallthrough(self, utterance, intent):
-        """Step 9 closed this one; the gerund below is what is left."""
+        """Step 9 closed the "tells" half and Step 11 the recall half."""
         assert verdict(utterance, intent) == framing.MENTION
 
     @pytest.mark.parametrize(
         "utterance,intent",
         [
-            # "telling" is in neither list and was explicitly left out of
-            # Step 9, so this must not move.
-            ("I remember you telling me a joke", "jokes"),
+            # A gerund that is not a recall, and is not caught by anything.
+            # Step 9 could not reach it and Step 11 deliberately did not
+            # either: it is a request the user is making.
+            ("keep telling me more", "jokes"),
         ],
     )
-    def test_the_two_fallthroughs_are_left_untouched(self, utterance, intent):
+    def test_the_gerund_still_falls_through_when_it_is_an_order(
+        self, utterance, intent
+    ):
         assert verdict(utterance, intent) == framing.NEUTRAL
 
     @pytest.mark.parametrize(
@@ -969,8 +972,175 @@ class TestDeclaresTellsGuard:
             }
         )
 
-    def test_telling_was_left_untouched_on_purpose(self):
-        """The gerund is out of scope for this step and must not move."""
-        assert verdict("I remember you telling me a joke", "jokes") == framing.NEUTRAL
-        assert verdict("you were telling me a joke", "jokes") == framing.MENTION
+    def test_telling_was_left_out_of_this_step(self):
+        """Step 9 read "tells" only, and still does.
+
+        The gerund is handled by a different rule added in Step 11, so
+        nothing here was widened to reach it.
+        """
+        assert verdict("keep telling me more", "jokes") == framing.NEUTRAL
+        assert framing._declares_habit(
+            normalize("I remember you telling me a joke").tokens
+        ) is False
+
+
+# ----------------------------------------------------------------------
+# The recall + "telling" guard (Step 11)
+# ----------------------------------------------------------------------
+class TestRecallTellGuard:
+    """``telling`` is a remark in the past and an order in the present.
+
+    The gerund sits in both directions at once, so it cannot be judged on
+    its own. This guard matches one whole clause instead: a recall verb in
+    front of a subject and the gerund. That is the only shape Step 10
+    showed to be a leak, and the request side of the gerund is not in it.
+    """
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # The four gaps Step 10 measured as reachable framing leaks.
+            ("I remember you telling me a joke", "jokes"),
+            ("I remember him telling me the news", "news"),
+            ("I recall him telling me the news", "news"),
+            ("I remember you telling me the weather", "weather"),
+        ],
+    )
+    def test_the_four_recall_targets_are_mentions(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # More of the same clause shape, so the rule is not pinned to
+            # four literal sentences.
+            ("I recall you telling me that yesterday", "news"),
+            ("I remember her telling that story", "jokes"),
+            ("I remember him telling that story", "jokes"),
+            ("I recall you telling me a joke", "jokes"),
+            ("I remember them telling the news", "news"),
+            ("we remember you telling me the weather", "weather"),
+        ],
+    )
+    def test_more_recall_constructions_are_mentions(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # The same opening, continued into a real request. The recall
+            # is the setup and the request is the point, so the guard has
+            # to stand down.
+            ("I remember you telling me that, explain it again", "facts"),
+            ("I remember you telling that joke, tell me another one", "jokes"),
+            ("I remember you telling me the weather, check it", "weather"),
+            ("I recall you telling me the news, show me the headlines", "news"),
+            ("I remember him telling the story, read it again", "history"),
+        ],
+    )
+    def test_a_later_request_beats_the_recollection(self, utterance, intent):
+        assert verdict(utterance, intent) != framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("tell me a joke", "jokes"),
+            ("tell me the news", "news"),
+            ("can you tell me a joke?", "jokes"),
+            ("please tell me the news", "news"),
+            ("keep telling me more jokes", "jokes"),
+            ("keep telling me more", "jokes"),
+            ("what are you telling me?", "news"),
+            ("why were you telling me that?", "news"),
+            ("did you keep telling him the news?", "news"),
+        ],
+    )
+    def test_genuine_requests_and_questions_are_never_blocked(
+        self, utterance, intent
+    ):
+        """The request side of the gerund, and every bare "tell" cue."""
+        assert verdict(utterance, intent) != framing.MENTION
+
+    def test_the_one_named_exception_still_runs(self):
+        """"I remember you telling me that, explain it again".
+
+        "explain" is **not** a request cue, so rule 1 does not catch it
+        and the stand-down check in the guard is the only thing between
+        this sentence and a false block. It is neutral, which is not
+        REQUEST, but it is not blocked either, and nothing regressed.
+        """
+        tokens = normalize("I remember you telling me that, explain it again").tokens
+        assert framing._recalls_speech(tokens) is False
+        assert "explain" not in framing.REQUEST_CUES
+        assert verdict(
+            "I remember you telling me that, explain it again", "facts"
+        ) == framing.NEUTRAL
+
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            # The recall verb is missing.
+            "you telling me a joke",
+            "him telling me the news",
+            # The subject is missing.
+            "I remember telling me a joke",
+            "I recall telling the news",
+            # The gerund is missing or different.
+            "I remember you said a joke",
+            "I remember you tell me a joke",
+        ],
+    )
+    def test_the_clause_must_be_complete(self, utterance):
+        """Not a generic gerund rule: the whole clause has to be there."""
+        assert framing._recalls_speech(normalize(utterance).tokens) is False
+
+    def test_the_speaker_has_to_be_first_person(self):
+        """A third-person recall is not the measured shape."""
+        for utterance in (
+            "she remembers you telling me a joke",
+            "they recall him telling the news",
+            "the news reminds me of you telling jokes",
+        ):
+            assert framing._recalls_speech(normalize(utterance).tokens) is False, (
+                utterance
+            )
+
+    def test_interrogatives_are_not_recall_subjects(self):
+        """So a question keeps its own path through the rule order."""
+        for word in ("what", "who", "when", "why", "how"):
+            assert word not in framing.RECALL_SUBJECTS
+            assert word not in framing.RECALL_SPEAKERS
+        assert verdict("what do you remember telling me", "news") != framing.MENTION
+
+    def test_telling_was_not_added_to_a_verb_list(self):
+        """The gerund is handled by a rule, not by editing the lists."""
+        assert "telling" not in framing.REQUEST_CUES
+        assert "telling" not in framing.NARRATIVE_VERBS
+        assert framing.NARRATIVE_VERBS == frozenset(
+            {
+                "mentioned", "heard", "told", "discussed", "chatted", "talked",
+                "reported", "announced", "explained", "confirmed", "commented",
+            }
+        )
+
+    def test_the_recall_verbs_are_a_closed_pair(self):
+        assert framing.RECALL_VERBS == frozenset({"remember", "recall"})
+
+    def test_the_stand_down_list_can_only_make_framing_permissive(self):
+        """Every entry must be a word no current rule treats as a request.
+
+        The list exists to stop the guard from firing, so an entry that
+        already reaches rule 1 would be dead weight, and one that reaches
+        a remark rule would be actively misleading.
+        """
+        for word in framing.FOLLOW_UP_VERBS:
+            assert word not in framing.REQUEST_CUES, word
+            assert word not in framing.NARRATIVE_VERBS, word
+
+    def test_a_fragment_cannot_match(self):
+        """The clause needs five tokens, so a fragment is unaffected."""
+        for utterance in ("telling", "remember", "i remember", "telling me jokes"):
+            assert framing._recalls_speech(normalize(utterance).tokens) is False
+            assert verdict(utterance, "jokes") == framing.NEUTRAL
 

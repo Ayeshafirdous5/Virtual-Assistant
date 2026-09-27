@@ -233,6 +233,63 @@ TELLS_PHRASE_BREAKS = frozenset(
 #: into an unrelated clause.
 TELLS_SUBJECT_SPAN = 3
 
+# ----------------------------------------------------------------------
+# The recall + "telling" guard
+# ----------------------------------------------------------------------
+#: "telling" is the gerund of a verb this layer reads as a remark in the
+#: past, yet it is in neither verb list, so framing has no opinion and
+#: returns :data:`NEUTRAL`. Used on its own it cannot be judged, because
+#: it appears in both directions at once:
+#:
+#:     "keep telling me more"               an order to the assistant
+#:     "I remember you telling me a joke"   a recalled event
+#:
+#: What separates them is a **recall verb in front of it**. "I remember"
+#: and "I recall" introduce a report of something that already happened,
+#: and a request never begins that way. These are the sentences:
+#:
+#:     I remember you telling me a joke
+#:     I remember him telling me the news
+#:     I recall him telling me the news
+#:     I remember you telling me the weather
+#:
+#: The rule is a whole clause rather than a word, and the recall verb is
+#: the only thing it matches on.
+RECALL_VERBS = frozenset({"remember", "recall"})
+
+#: The subject of the recall. "I remember **you** telling me" is the
+#: attested shape; the rest are the pronouns that can fill the same slot.
+#:
+#: Deliberately absent are the interrogatives, so "what do you remember
+#: telling me" stays with the question rules.
+RECALL_SUBJECTS = frozenset({"you", "him", "her", "them", "me", "us"})
+
+#: First-person subjects that can carry a recall. Closed, because the
+#: rule should only fire on the shape that was actually measured.
+RECALL_SPEAKERS = frozenset({"i", "we"})
+
+#: Verbs that start a **new clause after** the recollection, which means
+#: the sentence continues past it into something the user is asking for.
+#:
+#: This list only ever makes the guard *stand down*. It cannot cause a
+#: block, so an omission here costs a missed block while an unnecessary
+#: entry could cost a broken command. That asymmetry is deliberate.
+#:
+#:     "I remember you telling me that, explain it again"
+#:
+#: Here the recollection is the setup and the actual request is "explain
+#: it again", so blocking would be wrong. Note that "explain" is **not** a
+#: request cue, so rule 1 above does not catch it and this is the only
+#: thing standing between that sentence and a false block.
+#:
+#: Only verbs rule 1 does **not** already catch belong here. A request cue
+#: in this position is dead weight, because the cue rule has already
+#: returned before the guard is ever consulted, and a test enforces it.
+FOLLOW_UP_VERBS = frozenset(
+    {"explain", "describe", "repeat", "say", "recite", "translate"}
+)
+
+
 
 
 #: Past-tense verbs of speech, information transfer and discussion.
@@ -424,6 +481,53 @@ def _declares_habit(tokens: tuple[str, ...]) -> bool:
     return False
 
 
+def _recalls_speech(tokens: tuple[str, ...]) -> bool:
+    """True when a recall verb introduces a reported event.
+
+    The gerund "telling" cannot be judged on its own, because it appears
+    in both directions:
+
+        "keep telling me more"               an order
+        "I remember you telling me a joke"   a recollection
+
+    So this does not look at "telling" at all. It matches one whole
+    clause, in order:
+
+        speaker  +  recall verb  +  subject  +  "telling"
+
+    and then stands down if the sentence continues past the recollection
+    into something the user is asking for. That last check is the
+    difference between the four sentences this fixes and the one it must
+    spare:
+
+        "I remember you telling me a joke"                  blocked
+        "I remember you telling me that, explain it again"  spared
+
+    Both start identically. Only the second one carries on afterwards,
+    and the continuation is the request.
+
+    A fragment cannot match: the clause needs five tokens, and the
+    gerund has to be the fourth of them.
+    """
+    if len(tokens) < 5:
+        return False
+    if tokens[0] not in RECALL_SPEAKERS:
+        return False
+    if tokens[1] not in RECALL_VERBS:
+        return False
+    if tokens[2] not in RECALL_SUBJECTS:
+        return False
+    if tokens[3] != "telling":
+        return False
+    # The recollection has to be the whole point of the sentence. A
+    # request cue after it is already handled by rule 1 above; this
+    # catches the continuations that are not cues.
+    tail = tokens[4:]
+    if any(word in REQUEST_CUES or word in FOLLOW_UP_VERBS for word in tail):
+        return False
+    return True
+
+
 def assess(normalized: Normalized, intent: str) -> str:
     """Judge whether ``intent`` is being requested or merely mentioned.
 
@@ -469,6 +573,13 @@ def assess(normalized: Normalized, intent: str) -> str:
         token == "tell" and _reports_speech(tokens, index)
         for index, token in enumerate(tokens)
     ):
+        return MENTION
+
+    # 1c. A recollection introduced by a recall verb. Placed here, after
+    #     every request and question rule and before the hedging, copula
+    #     and narrative rules, so an explicit ask always wins and a plain
+    #     remark is never decided by a weaker signal first.
+    if _recalls_speech(tokens):
         return MENTION
 
     # 2. Hedging marks a remark.

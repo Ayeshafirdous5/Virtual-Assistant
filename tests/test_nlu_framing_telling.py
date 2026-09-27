@@ -1,47 +1,46 @@
-"""Measurement of the ``tell`` verb forms in the framing layer.
+"""Measurement of the gerund ``telling`` in the framing layer.
 
 This step is **measurement only**. No production rule changes here, and
 nothing in this module asserts that the current behaviour is right.
 
-What is being measured
-----------------------
-Step 7's reported-"tell" guard closed every leak caused by the bare
-``tell`` request cue. Two survived, and they are a different problem:
+Why ``telling`` is the hard one
+-------------------------------
+Steps 7 to 9 closed the bare ``tell`` cue and the declarative ``tells``.
+The gerund is the last form, and it is the only one that appears in
+**both** directions at once:
 
-    "my brother tells me jokes"        "tells"
-    "I remember you telling me a joke" "telling"
+    "I remember you telling me a joke"   reported speech  -> should block
+    "keep telling me more"               an order         -> must not block
 
-Neither contains ``tell``. Both forms are in *neither* production list,
-so framing has no opinion and returns :data:`~assistant.nlu.framing.NEUTRAL`,
-which always proceeds. This corpus (:mod:`tests.nlu_framing_verb_forms_corpus`)
-measures the four forms together, so a future step can decide what to do
-about "tells" and "telling" on evidence.
+There is no subject test that separates those, because the first has a
+subject in front of the gerund and the second has an implicit one. So
+this corpus keeps the two populations in separate categories, and the
+report shows what each one costs today, rather than assuming a rule.
 
 The distinction this module is built around
-------------------------------------------
-A framing verdict is **not** the same thing as a tool running, and a
-report that conflates the two is worse than no report. So every case is
-put through two measurements:
+--------------------------------------------
+A framing verdict is not the same thing as a tool running. Every case is
+therefore measured twice:
 
 :func:`framing_verdict`
-    ``framing.assess()`` in isolation, against the labelled intent. This
-    is the layer under study.
+    ``framing.assess()`` in isolation, against the labelled intent.
 :func:`pipeline_reaches_framing`
     whether the parser produced an intent at all, which is the condition
     for framing to be consulted in the real application.
 
-A case can therefore be a framing leak that never fires, and several are.
+A case can be a framing leak that never fires, and **most of them are**.
 Those are counted and named separately as :data:`NEVER_REACHED`. They
-are **not** treated as fixed, and this module refuses to let a future
-change quietly claim them by adding a count that would confuse the two.
+are not treated as fixed, and this module refuses to let a later change
+quietly claim them by folding them into one accuracy figure.
 
-Reporting consequence
----------------------
-A case the parser never saw is a real gap in a *different* layer. It
-means the sentence names no trigger word, so the parser returns ``None``
-and nothing downstream is consulted. The count is reported as
-``parser no-match`` rather than folded into the framing accuracy, so the
-two problems stay visible as two problems.
+The one genuine framing gap
+---------------------------
+Of the thirteen mismatches, five are cases where the parser routes the
+sentence and framing answers wrongly. Four of those are the reported
+speech this study is about. The fifth is the mirror image and is the
+important one: **"keep telling me more jokes" is a genuine request that
+framing has no opinion about.** A rule written for the four would very
+likely catch the fifth, and that is the cost the next step has to weigh.
 """
 
 from __future__ import annotations
@@ -53,73 +52,56 @@ import pytest
 from assistant.nlu import framing
 from assistant.nlu.normalize import normalize
 from assistant.nlu.parser import parse
-from tests.nlu_framing_verb_forms_corpus import (
+from tests.nlu_framing_telling_corpus import (
     CATEGORIES,
+    CATEGORY_GERUND_TRAP,
+    CATEGORY_NARRATIVE,
+    CATEGORY_REQUEST,
     CORPUS,
     REQUEST,
-    VERB_FORMS,
-    VerbFormCase,
+    TellingCase,
     by_category,
 )
 
 #: Size of the corpus, pinned so cases cannot be dropped to flatter a
 #: future change.
-RECORDED_CORPUS_SIZE = 49
+RECORDED_CORPUS_SIZE = 41
 
 #: Framing accuracy measured when this corpus was first run, against the
-#: rules as they stand at the end of Phase 5 Step 7. Pinned so a later
+#: rules as they stand at the end of Phase 5 Step 9. Pinned so a later
 #: change to ``framing.py`` has to move it deliberately.
 #:
-#: Step 9's declarative-"tells" guard took this from 35 of 49 to 42 of 49.
-#: Step 11's recall + "telling" guard then closed the last framing leak
-#: as well, taking it to 44. No label was edited to get there.
-RECORDED_ACCURACY = 0.8979591836734694
+#: Step 11's recall + "telling" guard took this from 28 of 41 to 35 of
+#: 41. No label was edited to get there. **Every** reported-speech leak
+#: is gone, and the one reachable mismatch left is the request the guard
+#: was written not to touch.
+RECORDED_ACCURACY = 0.8536585365853658
 
-#: Framing mismatch counts, pinned for the same reason. Three are
-#: let-throughs, two are wrong labels, and nothing is blocked.
-RECORDED_LEAKING = 3
+#: Framing mismatch counts, pinned for the same reason. Two are
+#: let-throughs, four are wrong labels, and nothing is blocked.
+RECORDED_LEAKING = 2
 RECORDED_BLOCKING = 0
-RECORDED_WRONG = 2
+RECORDED_WRONG = 4
 
-#: How many of the five framing was actually asked about. The other
+#: How many of the six framing was actually asked about. The other
 #: :data:`RECORDED_NEVER_REACHED` name no trigger word, so the parser
-#: returns ``None`` and framing is never consulted. **Step 11 brought the
-#: framing group to zero.** Everything left in this corpus is a
-#: parser-layer gap, which is the whole reason the split exists.
-RECORDED_LEAKING_REACHED = 0
+#: returns ``None`` and framing is never consulted.
+RECORDED_LEAKING_REACHED = 1
 RECORDED_NEVER_REACHED = 5
 
-#: The two leaks that are *not* leaks. Both are labelled REQUEST and both
-#: come back neutral, so they are wrong labels rather than let-throughs.
-RECORDED_WRONG_UNREACHED = 2
+#: How the one reachable mismatch points. Step 11 closed all four
+#: reported-speech gaps, and deliberately left the single request gap:
+#: "keep telling me more jokes" is a genuine order that framing still has
+#: no opinion about. It is not broken, because neutral lets it run.
+RECORDED_REPORTED_SPEECH_GAPS = 0
+RECORDED_REQUEST_GAPS = 1
 
-#: Step 9 left one framing leak here, the gerund. Step 11 closed it, so
-#: there is no remaining framing leak and nothing for a future step to
-#: claim. Asserted explicitly so the count cannot quietly go back up.
-REMAINING_FRAMING_LEAK: str | None = None
+#: The request the guard must not catch, named so it stays visible. It is
+#: the one case a future rule for "telling" has to keep sparing.
+REMAINING_REQUEST_GAP = "keep telling me more jokes"
 
-#: Cases whose verb form is the point of the case, named so a future
-#: step cannot describe the corpus as being about "tell" alone.
-FORMS_UNDER_STUDY = ("tell", "tells", "telling", "told")
-
-
-def framing_verdict(case: VerbFormCase) -> str:
-    """Judge one case with framing alone, in isolation from the parser."""
-    return framing.assess(normalize(case.utterance), case.intent)
-
-
-def is_correct(case: VerbFormCase) -> bool:
-    return framing_verdict(case) == case.expected
-
-
-def accuracy(cases=CORPUS) -> float:
-    if not cases:
-        return 1.0
-    return sum(1 for case in cases if is_correct(case)) / len(cases)
-
-
-#: Cause labels for a framing mismatch. The whole point of this step is
-#: that these are not interchangeable, so they are named as data.
+#: Cause labels for a framing mismatch. These are not interchangeable,
+#: so they are named as data rather than described in prose.
 CAUSE_FRAMING = "framing-behaviour"
 CAUSE_PARSER_NO_MATCH = "parser-no-match"
 CAUSE_AMBIGUOUS = "ambiguous-upstream"
@@ -132,7 +114,7 @@ NEVER_REACHED = CAUSE_PARSER_NO_MATCH
 
 @functools.lru_cache(maxsize=1)
 def _lexicon():
-    """The runtime lexicon, built once. It imports no tool into the NLU."""
+    """The runtime lexicon, built once."""
     from assistant.app import build_runtime_lexicon
     from assistant.tools import build_default_router
 
@@ -143,7 +125,7 @@ def pipeline_reaches_framing(utterance: str) -> tuple[bool, str]:
     """Does the parser produce an intent, and therefore reach framing?
 
     Returns ``(reached, reason)``. ``reason`` is one of the ``CAUSE_*``
-    labels, or ``""`` when the parser returned an intent confidently and
+    labels, or ``""`` when the parser returned a confident intent and
     framing was consulted.
     """
     parsed = parse(utterance, _lexicon())
@@ -154,16 +136,30 @@ def pipeline_reaches_framing(utterance: str) -> tuple[bool, str]:
     return True, ""
 
 
+def framing_verdict(case: TellingCase) -> str:
+    """Judge one case with framing alone, in isolation from the parser."""
+    return framing.assess(normalize(case.utterance), case.intent)
+
+
+def is_correct(case: TellingCase) -> bool:
+    return framing_verdict(case) == case.expected
+
+
+def accuracy(cases=CORPUS) -> float:
+    if not cases:
+        return 1.0
+    return sum(1 for case in cases if is_correct(case)) / len(cases)
+
 class Mismatch:
     """One case where the rule and the expected label disagree.
 
     Every mismatch carries a **cause**, and the cause is the part that
-    matters. A framing verdict that the parser never asked for is not a
-    framing defect, and reporting it as one would send the next step
-    looking in the wrong file.
+    matters. A framing verdict the parser never asked for is not a framing
+    defect, and reporting it as one would send the next step looking in
+    the wrong file.
     """
 
-    def __init__(self, case: VerbFormCase, actual: str) -> None:
+    def __init__(self, case: TellingCase, actual: str) -> None:
         self.case = case
         self.actual = actual
         self.reached, self.cause = pipeline_reaches_framing(case.utterance)
@@ -181,16 +177,37 @@ class Mismatch:
 
     @property
     def is_framing_issue(self) -> bool:
-        """True when framing was actually asked and answered wrongly.
+        """True when framing was actually consulted and answered wrongly.
 
-        This is the only subset a change to ``framing.py`` can address.
+        The only subset a change to ``framing.py`` can address, and it
+        covers all three kinds. A reachable *wrong label* counts too: the
+        parser did ask, and framing did answer incorrectly, so this is
+        framing behaviour even though nothing was blocked.
         """
-        return self.reached and self.kind in ("false-let-through", "false-block")
+        return self.reached
 
     @property
     def is_parser_issue(self) -> bool:
         """True when the parser stopped the sentence before framing."""
         return not self.reached
+
+    @property
+    def is_reported_speech_gap(self) -> bool:
+        """A reachable remark that reached a tool instead of being blocked."""
+        return (
+            self.is_framing_issue
+            and self.case.expected == framing.MENTION
+        )
+
+    @property
+    def is_request_gap(self) -> bool:
+        """A reachable request that framing has no opinion about.
+
+        This is the one to watch. It is not a live defect today, because
+        NEUTRAL lets the command through, but it is the case a future
+        "telling is a remark" rule would be most likely to break.
+        """
+        return self.is_framing_issue and self.case.expected == framing.REQUEST
 
     def describe(self) -> str:
         return (
@@ -218,15 +235,16 @@ def parser_gaps(cases=CORPUS) -> list[Mismatch]:
     return [m for m in mismatches(cases) if m.is_parser_issue]
 
 
-
 def build_report() -> str:
     """Render the whole measurement as readable text."""
     bad = mismatches()
     issues = framing_issues()
     gaps = parser_gaps()
+    speech = [m for m in issues if m.is_reported_speech_gap]
+    requests = [m for m in issues if m.is_request_gap]
 
     lines = [
-        "verb-form evaluation for tell / tells / telling / told",
+        "telling (gerund) evaluation",
         "  (MEASUREMENT ONLY - no production change)",
         f"  total cases        : {len(CORPUS)}",
         f"  correct            : {len(CORPUS) - len(bad)}",
@@ -245,10 +263,18 @@ def build_report() -> str:
         f"    framing was consulted and is wrong : {len(issues)}",
         f"    parser never reached framing       : {len(gaps)}",
         "",
-        "    A parser gap is NOT a framing fix. Those sentences name no",
-        "    trigger word, so the parser returns None and framing is never",
-        "    asked. They are counted here so they cannot be quietly",
-        "    claimed later.",
+        "    A parser no-match is NOT a framing fix. Those sentences name",
+        "    no trigger word, so the parser returns None and framing is",
+        "    never asked. They are counted here so they cannot be quietly",
+        "    claimed by a later step.",
+        "",
+        "  the reachable gaps, and which way they point:",
+        f"    reported speech that ran a tool : {len(speech)}",
+        f"    requests framing has no opinion on: {len(requests)}",
+        "",
+        "    The second line is the one to read twice. Those requests are",
+        "    not broken today, because neutral still lets them run. They",
+        "    are the cases a 'telling is a remark' rule would catch.",
         "",
         "  by category:",
     ]
@@ -278,36 +304,29 @@ def build_report() -> str:
         for item in group:
             lines.append(f"    - {item.describe()}")
 
-    lines += [
-        "",
-        "  addressable by a framing change:",
-    ]
+    lines += ["", "  addressable by a framing change:"]
     if not issues:
         lines.append("    none")
     for item in issues:
-        lines.append(f"    - {item.case.utterance!r} ({item.case.category})")
+        direction = (
+            "should have blocked"
+            if item.is_reported_speech_gap
+            else "should have run"
+        )
+        lines.append(
+            f"    - {item.case.utterance!r} ({item.case.category}; {direction})"
+        )
 
-    lines += [
-        "",
-        "  NOT addressable by framing (parser never reached):",
-    ]
+    lines += ["", "  NOT addressable by framing (parser never reached):"]
     if not gaps:
         lines.append("    none")
     for item in gaps:
         lines.append(f"    - {item.case.utterance!r} ({item.cause})")
 
-    lines += [
-        "",
-        "  current production treatment:",
-    ]
-    for form, treatment in VERB_FORMS.items():
-        lines.append(f"    {form:<10} {treatment}")
-
     if not bad:
         lines.append("")
         lines.append("  mismatches         : none")
     return "\n".join(lines)
-
 
 
 # ----------------------------------------------------------------------
@@ -346,16 +365,31 @@ class TestCorpus:
         for case in CORPUS:
             assert case.note, case.utterance
 
-    def test_all_four_verb_forms_appear(self):
-        """The point of the corpus is the forms, so all four must be here."""
-        for form in FORMS_UNDER_STUDY:
-            hits = [c for c in CORPUS if form in c.utterance.split()]
-            assert hits, form
+    def test_telling_is_really_under_study(self):
+        """The gerund carries most of the corpus.
+
+        The only cases allowed to sit outside the tell word family are
+        the neighbouring gerunds, which exist precisely to show what a
+        rule written for "telling" would and would not reach.
+        """
+        family = ("telling", "tells", "tell", "told")
+        outside = [
+            c for c in CORPUS if not any(w in c.utterance for w in family)
+        ]
+        assert all(c.category == CATEGORY_GERUND_TRAP for c in outside), [
+            c.utterance for c in outside
+        ]
+        assert len(outside) == len(by_category(CATEGORY_GERUND_TRAP))
 
     def test_both_verdicts_are_represented(self):
         counts = {c.expected for c in CORPUS}
         assert framing.REQUEST in counts
         assert framing.MENTION in counts
+
+    def test_the_two_populations_are_both_substantial(self):
+        """The decision the next step faces needs both sides measured."""
+        assert len(by_category(CATEGORY_NARRATIVE)) >= 8
+        assert len(by_category(CATEGORY_REQUEST)) >= 5
 
     def test_negation_is_left_to_the_layer_that_handles_it(self):
         """Negated requests are dropped upstream, so not measured here."""
@@ -368,66 +402,56 @@ class TestCorpus:
         from tests import nlu_framing_adversarial_corpus as adversarial
         from tests import nlu_framing_corpus as original
         from tests import nlu_framing_tell_corpus as tell
+        from tests import nlu_framing_verb_forms_corpus as verb_forms
 
         assert len(original.CORPUS) == 32
         assert len(adversarial.CORPUS) == 46
         assert len(tell.CORPUS) == 57
+        assert len(verb_forms.CORPUS) == 49
 
 
 # ----------------------------------------------------------------------
 # The production facts this measurement rests on
 # ----------------------------------------------------------------------
 class TestProductionFactsUnderMeasurement:
-    """Pinned so the numbers above are attributable to a known cause.
+    """Pinned so the numbers above are attributable to a known cause."""
 
-    This is the whole point of the study. The framing mismatches come
-    from "tells" and "telling" being in *neither* list, and these
-    assertions record that.
-    """
+    def test_telling_is_in_neither_list(self):
+        """Why every reported-speech case falls through to neutral."""
+        assert "telling" not in framing.REQUEST_CUES
+        assert "telling" not in framing.NARRATIVE_VERBS
 
-    def test_tell_is_a_request_cue(self):
+    def test_the_whole_family_is_where_step_nine_left_it(self):
+        """"tell" a cue, "told" a narrative verb, the other two unlisted."""
         assert "tell" in framing.REQUEST_CUES
-
-    def test_told_is_a_narrative_verb(self):
+        assert "tell" not in framing.NARRATIVE_VERBS
         assert "told" in framing.NARRATIVE_VERBS
+        assert "tells" not in framing.REQUEST_CUES
+        assert "tells" not in framing.NARRATIVE_VERBS
 
-    def test_tells_and_telling_are_in_neither_list(self):
-        """Why the two surviving leaks exist at all."""
-        for word in ("tells", "telling"):
-            assert word not in framing.REQUEST_CUES, word
-            assert word not in framing.NARRATIVE_VERBS, word
+    def test_step_nine_did_not_already_cover_telling(self):
+        """The declarative guard reads "tells" only, by design."""
+        for tokens in (
+            ("i", "remember", "you", "telling", "me", "a", "joke"),
+            ("keep", "telling", "me", "more"),
+        ):
+            assert framing._declares_habit(tokens) is False, tokens
 
-    def test_the_verb_form_table_matches_production(self):
-        """The documented table in the corpus must be true, not prose."""
-        for form, treatment in VERB_FORMS.items():
-            in_cues = form in framing.REQUEST_CUES
-            in_narrative = form in framing.NARRATIVE_VERBS
-            if treatment == "request-cue":
-                assert in_cues and not in_narrative, form
-            elif treatment == "narrative-verb":
-                assert in_narrative and not in_cues, form
-            else:
-                assert not in_cues and not in_narrative, form
+    def test_the_nearby_gerunds_are_measured_not_assumed(self):
+        """Each neighbouring gerund is handled by its own evidence.
 
-    def test_the_nearby_verbs_are_where_they_are_documented(self):
-        """The past forms that are listed, and the ones deliberately not.
-
-        "said" and "say" are **not** narrative verbs. "say" is absent
-        because "what did I say" is the history alias, and "said" was
-        left out for the same reason. Those two still work as remarks
-        because a copula or another rule catches the sentences they
-        appear in, which the trap category shows.
+        "talking" and "discussing" reach the past forms in
+        :data:`NARRATIVE_VERBS`. "saying" and "hearing" are unlisted and
+        are caught by the copula instead. None of them is a rule about
+        the gerund, which is exactly why the trap category is measured
+        rather than assumed.
         """
-        for word in ("heard", "mentioned", "explained", "discussed", "told"):
-            assert word in framing.NARRATIVE_VERBS, word
-        for word in ("say", "said", "mention", "explain", "discuss", "hear"):
+        for past in ("talked", "discussed", "explained", "mentioned"):
+            assert past in framing.NARRATIVE_VERBS, past
+        for gerund in ("talking", "discussing", "explaining", "mentioning"):
+            assert gerund not in framing.NARRATIVE_VERBS, gerund
+        for word in ("saying", "hearing", "telling"):
             assert word not in framing.NARRATIVE_VERBS, word
-
-    def test_the_step_seven_guard_only_reads_tell(self):
-        """The guard from Step 7 must not already be reading these forms."""
-        for tokens in (("tells", "me", "jokes"), ("telling", "me", "a", "joke")):
-            assert not framing._reports_speech(tokens, 0), tokens
-
 
 
 # ----------------------------------------------------------------------
@@ -486,69 +510,71 @@ class TestMeasurement:
         ]
 
     def test_the_layer_split_is_recorded(self):
-        """Six are framing's, eight are the parser's. Keep them apart."""
+        """Five are framing's, eight are the parser's. Keep them apart."""
         assert len(framing_issues()) == RECORDED_LEAKING_REACHED
         assert len(parser_gaps()) == RECORDED_NEVER_REACHED
 
     def test_the_two_groups_partition_the_mismatches(self):
         assert len(framing_issues()) + len(parser_gaps()) == len(mismatches())
 
-    def test_the_wrong_labels_are_all_unreached(self):
-        """Both are labelled REQUEST and neither is a let-through."""
-        wrong = by_kind("wrong-label")
-        assert len(wrong) == RECORDED_WRONG_UNREACHED
-        assert all(item.is_parser_issue for item in wrong)
-
-    def test_the_two_surviving_tell_corpus_leaks_are_here(self):
-        """Both Step 7 fall-throughs started this corpus, and Step 11
-        closed the second of them.
-
-        "my brother tells me jokes" was closed by Step 9's declarative
-        guard. "I remember you telling me a joke" was the gerund, left
-        alone by Step 9 and closed by Step 11's recall guard.
-        """
-        utterances = {c.utterance for c in CORPUS}
-        assert "my brother tells me jokes" in utterances
-        assert "I remember you telling me a joke" in utterances
-
-    def test_the_one_remaining_framing_leak_is_the_gerund(self):
-        """Step 11 closed this corpus's last framing leak.
-
-        "I remember you telling me a joke" was the gerund, and Step 9
-        left it open on purpose. It is now blocked, so there is no
-        framing issue left here at all and every remaining mismatch is
-        a parser no-match.
-        """
-        assert REMAINING_FRAMING_LEAK is None
-        assert not framing_issues()
-        case = next(
-            c for c in CORPUS if c.utterance == "I remember you telling me a joke"
-        )
-        assert framing_verdict(case) == framing.MENTION
-
     def test_a_parser_gap_is_never_called_fixed(self):
         """The distinction this step exists to protect.
 
         A case the parser never routes to framing cannot be improved by
-        editing ``framing.py``. If such a case were ever counted as a
-        framing fix, the accuracy figure would improve for the wrong
-        reason, so the two groups are asserted to be disjoint sets and
-        both are pinned.
+        editing ``framing.py``. Counting one as a framing fix would move
+        the accuracy figure for entirely the wrong reason.
         """
         issues = {m.case.utterance for m in framing_issues()}
         gaps = {m.case.utterance for m in parser_gaps()}
-        assert gaps, "this corpus is meant to carry parser-layer cases"
+        assert issues and gaps
         assert not (issues & gaps)
-        # Framing has nothing left to fix here, so every remaining
-        # mismatch must be a parser gap. Asserted in that direction
-        # because the framing side is legitimately empty.
-        assert issues == set()
 
-    def test_the_addressable_group_is_all_tells_or_telling(self):
-        """The six framing leaks all carry an unlisted form."""
+    def test_the_two_directions_are_counted_apart(self):
+        """Four remarks should have blocked; one request should have run."""
+        speech = [m for m in framing_issues() if m.is_reported_speech_gap]
+        requests = [m for m in framing_issues() if m.is_request_gap]
+        assert len(speech) == RECORDED_REPORTED_SPEECH_GAPS
+        assert len(requests) == RECORDED_REQUEST_GAPS
+        assert len(speech) + len(requests) == RECORDED_LEAKING_REACHED
+
+    def test_the_request_gap_is_the_one_to_watch(self):
+        """"keep telling me more jokes" is a genuine request.
+
+        It is not broken today, because NEUTRAL lets it run. It is named
+        here so a future rule for reported "telling" cannot be written,
+        tested green, and quietly break it.
+        """
+        gap = next(m for m in framing_issues() if m.is_request_gap)
+        assert gap.case.expected == framing.REQUEST
+        assert gap.actual == framing.NEUTRAL
+        assert gap.case.category == CATEGORY_REQUEST
+
+    def test_the_speech_gaps_all_carry_the_gerund(self):
+        """Vacuous once Step 11 closed them all, and that is the point.
+
+        The assertion is kept rather than deleted: if a future change
+        lets a reported-speech case leak again, this is what catches it,
+        and the pin on the count above says how many there should be.
+        """
         for item in framing_issues():
-            tokens = normalize(item.case.utterance).tokens
-            assert "tells" in tokens or "telling" in tokens, item.case.utterance
+            if not item.is_reported_speech_gap:
+                continue
+            assert "telling" in normalize(item.case.utterance).tokens
+
+    def test_every_reachable_reported_speech_leak_is_closed(self):
+        """The four Step 10 targets, asserted one at a time."""
+        for utterance in (
+            "I remember you telling me a joke",
+            "I remember him telling me the news",
+            "I recall him telling me the news",
+            "I remember you telling me the weather",
+        ):
+            assert framing_verdict(
+                next(c for c in CORPUS if c.utterance == utterance)
+            ) == framing.MENTION, utterance
+
+    def test_no_reported_speech_survives_as_a_reachable_leak(self):
+        assert not [m for m in framing_issues() if m.is_reported_speech_gap]
 
     def test_mismatches_are_grouped_by_category_in_the_report(self):
         report = build_report()
@@ -563,15 +589,24 @@ class TestMeasurement:
         assert "NOT addressable by framing" in report
         assert CAUSE_PARSER_NO_MATCH in report
 
+    def test_the_report_separates_the_two_directions(self):
+        """The report must still be able to express both directions.
+
+        "should have blocked" only appears while a reported-speech leak
+        survives, so it is asserted through the builder rather than the
+        rendered text: today the surviving gap points the other way, and
+        the report has to say so.
+        """
+        report = build_report()
+        assert "reported speech that ran a tool" in report
+        assert "requests framing has no opinion on" in report
+        assert "should have run" in report
+        assert not [m for m in framing_issues() if m.is_reported_speech_gap]
+
     def test_the_report_lists_every_kind_it_counts(self):
         report = build_report()
         for kind in ("false-let-through", "false-block", "wrong-label"):
             assert kind in report
-
-    def test_the_report_documents_the_verb_form_table(self):
-        report = build_report()
-        for form in FORMS_UNDER_STUDY:
-            assert form in report, form
 
     def test_the_report_is_printed(self, capsys):
         report = build_report()
