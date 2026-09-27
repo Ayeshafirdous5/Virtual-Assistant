@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------------------
+# Virtual Assistant - Git ignore rules
+# ---------------------------------------------------------------------------
+# These rules only prevent files from being tracked going forward.
+# They do not delete anything that is already on disk.
+# ---------------------------------------------------------------------------
+
+# --- Secrets / local configuration -----------------------------------------
+# Real API keys live here and must never be committed.
+.env
+.env.local
+.env.*.local
+
+# Keep the placeholder template so others know which variables are needed.
+!.env.example
+
+# --- Virtual environments ---------------------------------------------------
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Byte-compiled / cache files --------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Compiled extensions
+*.o
+*.dylib
+
+# --- Packaging / build artefacts --------------------------------------------
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Unit test / coverage output --------------------------------------------
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# --- Type checkers / linters -------------------------------------------------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# --- IDE / editor folders ---------------------------------------------------
+# NOTE: the .idea folder that already exists on disk is left untouched.
+# This rule only stops new .idea files from being tracked.
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.sublime-project
+*.sublime-workspace
+*.swp
+
+# --- Jupyter ----------------------------------------------------------------
+.ipynb_checkpoints/
+
+# --- OS generated files -----------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# --- Application data (SQLite database and friends) ------------------------
+# The assistant's own database and its WAL sidecar files.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Logs -------------------------------------------------------------------
+*.log
+logs/

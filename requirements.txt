@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Virtual Assistant - Python dependencies
+# ---------------------------------------------------------------------------
+# Target environment: Windows, Python 3.12
+# Install everything with:   pip install -r requirements.txt
+#
+# Versions are pinned to the set that is known to work in this project.
+# This file is for reproducibility - it does not aim to be the newest
+# release of every package.
+# ---------------------------------------------------------------------------
+
+# --- Voice output (text-to-speech) -----------------------------------------
+# On Windows this talks to the built-in SAPI5 voices via pywin32/comtypes,
+# which are pulled in automatically.
+pyttsx3==2.98
+
+# --- Voice input (speech recognition) --------------------------------------
+SpeechRecognition==3.12.0
+
+# Microphone backend required by SpeechRecognition on this Windows project.
+# This version is the last one publishing a widely available Windows wheel,
+# so it is pinned deliberately.
+PyAudio==0.2.14
+
+# --- Web browser automation (Wikipedia / YouTube) --------------------------
+selenium==4.27.1
+
+# --- HTTP client (NewsAPI, OpenWeatherMap, Official Joke API) --------------
+requests==2.32.3
+
+# --- Random facts used by the "tell me a fact" command --------------------
+randfacts==0.22.0
+
+# --- Environment variable / .env file support -----------------------------
+# Used to keep API keys out of the source code.
+python-dotenv==1.2.3
+
+# --- Development / testing --------------------------------------------------
+# Only needed to run the test suite:  python -m pytest
+pytest==9.1.1
