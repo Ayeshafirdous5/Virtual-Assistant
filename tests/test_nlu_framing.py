@@ -438,3 +438,147 @@ class TestNarrativeGuard:
         assert parsed.name == "jokes"
         assert parsed.confidence == "clear"
         assert resolve_detail(quiet, router, "my friend told me a joke", lexicon).tool is None
+
+
+# ----------------------------------------------------------------------
+# Trailing questions (Step 5)
+# ----------------------------------------------------------------------
+class TestTrailingQuestions:
+    """A question behind a narrative clause must still be a request.
+
+    ``_opens_a_question`` only ever inspects the start of an utterance, so
+    "we discussed the weather, what is it now" opened with a narrative
+    clause, the trailing question was never seen, and the remark rules
+    below blocked a genuine request. The question is now recognised by the
+    inversion inside its clause, and it is checked before every remark
+    rule, which is the ordering principle the layer already promised:
+    an explicit ask is never talked out of running.
+    """
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("we discussed the weather, what's it like now", "weather"),
+            ("I mentioned the weather, what is it now", "weather"),
+        ],
+    )
+    def test_the_two_known_false_blocks_are_requests(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.REQUEST
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("we discussed the weather, what's it like now", "weather"),
+            ("I mentioned the weather, what is it now", "weather"),
+        ],
+    )
+    def test_the_two_known_false_blocks_run_their_tool(
+        self, quiet, router, lexicon, utterance, intent
+    ):
+        """The whole pipeline, because a block is a command that stopped."""
+        resolution = resolve_detail(quiet, router, utterance, lexicon)
+        assert resolution.framing == framing.REQUEST
+        assert resolution.tool is not None, utterance
+        assert resolution.tool.name == intent
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("we talked about the news, what did I miss", "news"),
+            ("they discussed the logs, what did I ask then", "history"),
+            ("she reported the weather, is it still cold", "weather"),
+            ("my friend mentioned the joke, did you see it", "jokes"),
+            ("he commented on the weather, how is it looking", "weather"),
+        ],
+    )
+    def test_more_narrative_clauses_carrying_a_trailing_question(
+        self, utterance, intent
+    ):
+        assert verdict(utterance, intent) == framing.REQUEST
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            # A narrative clause and nothing after it: still a remark.
+            ("we discussed the news yesterday", "news"),
+            ("I mentioned the logs earlier", "history"),
+            ("my friend told me a joke", "jokes"),
+            ("she reported the weather to me", "weather"),
+            ("he confirmed the joke was good", "jokes"),
+            # The trap. These carry a question word and invert nothing, so
+            # they must not be mistaken for the cases above. This is the
+            # difference between reading for structure and searching for
+            # "what", "is" or "did".
+            ("I mentioned what I heard about the news", "news"),
+            ("we discussed what was funny", "jokes"),
+            ("he explained what I had told him", "news"),
+        ],
+    )
+    def test_narrative_statements_are_still_mentions(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.MENTION
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("weather", "weather"),
+            ("today's weather", "weather"),
+            ("the news", "news"),
+            ("some music", "youtube"),
+            ("a joke", "jokes"),
+            ("the logs", "history"),
+        ],
+    )
+    def test_fragments_are_still_neutral(self, utterance, intent):
+        assert verdict(utterance, intent) == framing.NEUTRAL
+
+    @pytest.mark.parametrize(
+        "utterance,intent",
+        [
+            ("what is the weather", "weather"),
+            ("is the weather good", "weather"),
+            ("did you hear the news", "news"),
+            ("what did I say", "history"),
+            ("how was your day", "news"),
+        ],
+    )
+    def test_leading_questions_are_untouched(self, utterance, intent):
+        """The leading check still runs first and must not have moved."""
+        assert verdict(utterance, intent) == framing.REQUEST
+
+    @pytest.mark.parametrize(
+        "utterance",
+        [
+            "tell me the weather",
+            "check the weather",
+            "show me the logs",
+            "play some music",
+            "get today's news",
+            "please exit",
+        ],
+    )
+    def test_request_cues_are_untouched(self, utterance):
+        assert verdict(utterance, "weather") != framing.MENTION
+
+    def test_the_two_question_sets_partition_the_interrogatives(self):
+        """Leading and trailing must agree on what interrogative means."""
+        assert (
+            framing.WH_QUESTIONS | framing.INVERTING_AUXILIARIES
+            == framing.INTERROGATIVE
+        )
+        assert not (framing.WH_QUESTIONS & framing.INVERTING_AUXILIARIES)
+
+    def test_inverted_subjects_are_pronouns_not_determiners(self):
+        """"is the" is not evidence: remarks open with it as well."""
+        assert "the" not in framing.INVERTED_SUBJECTS
+        assert "a" not in framing.INVERTED_SUBJECTS
+        assert "i" in framing.INVERTED_SUBJECTS
+
+    def test_only_later_positions_count_as_trailing(self):
+        """Position, not vocabulary, is what separates the two checks."""
+        assert framing._has_trailing_question(
+            normalize("what is the weather").tokens
+        ) is False
+        assert framing._has_trailing_question(
+            normalize("we discussed the weather, what is it now").tokens
+        ) is True
+

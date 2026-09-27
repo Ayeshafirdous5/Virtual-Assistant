@@ -20,6 +20,19 @@ This is deliberately not natural language processing. It is a short list
 of request cues, a short list of hedging and copula markers, and a small
 number of intent-specific rules. No parser, no grammar, no model.
 
+Questions
+---------
+A question is recognised by **inversion**: the verb comes before its
+subject. A remark never does that, which is what lets the layer tell
+"is the weather good" from "the weather is good" without reading either
+one for keywords. Inversion is also positional, so a question counts
+wherever it sits in the sentence, not only at the front:
+
+    "what is the weather"                      opens as a question
+    "we discussed the weather, what is it now"  asks at the end
+
+Both are requests, and both outrank every remark rule below them.
+
 It is also deliberately **one-sided**. ``MENTION`` is only returned when
 there is positive evidence of a remark, because a wrong ``REQUEST`` is the
 costly error: it would stop a genuine command from working. Anything
@@ -74,6 +87,36 @@ INTERROGATIVE = frozenset(
         "could", "would", "will", "should", "has", "have", "had", "am",
     }
 )
+
+#: :data:`INTERROGATIVE` split into the two halves a question is built
+#: from. Together these two sets **partition** :data:`INTERROGATIVE`, so
+#: the leading-question check and the trailing-question check can never
+#: disagree about which words are interrogative at all.
+#:
+#: The test applied to them is inversion, not vocabulary: a question puts
+#: the verb before its subject, and a remark does not.
+WH_QUESTIONS = frozenset(
+    {
+        "what", "how", "when", "where", "who", "whom", "whose", "why",
+        "which",
+    }
+)
+
+#: The other half of :data:`INTERROGATIVE`: verbs that move ahead of a
+#: subject to form a question. A declarative keeps the subject first.
+INVERTING_AUXILIARIES = frozenset(
+    {
+        "is", "are", "was", "were", "am", "do", "does", "did", "can",
+        "could", "will", "would", "should", "has", "have", "had",
+    }
+)
+
+#: Subjects a question can be inverted onto. Deliberately personal
+#: pronouns only. A determiner is not enough evidence, because "is the"
+#: also opens remarks such as "the weather is nice" once the subject is
+#: a noun phrase. A pronoun after an auxiliary is: "is it", "did you",
+#: "was he", "can we".
+INVERTED_SUBJECTS = frozenset({"i", "you", "he", "she", "it", "we", "they"})
 
 #: Words that mark speculation. A sentence that hedges is commenting, not
 #: ordering.
@@ -159,6 +202,41 @@ def _opens_a_question(tokens: tuple[str, ...]) -> bool:
     return _first_content_token(tokens) in INTERROGATIVE
 
 
+def _has_trailing_question(tokens: tuple[str, ...]) -> bool:
+    """True when a question clause begins part way through the sentence.
+
+    "we discussed the weather, what's it like now" asks something, but it
+    opens with a narrative clause, so :func:`_opens_a_question` never sees
+    the question and the remark rules below would swallow the request. What
+    identifies the question is not the question *word* but the inversion
+    inside the clause:
+
+        "what is it"    a question word, an auxiliary, then a subject
+        "is it"         an auxiliary, then a subject
+
+    No remark inverts, so "I mentioned what I heard" and "we discussed
+    what was funny" keep returning :data:`MENTION` even though both carry a
+    question word. That is the difference between this and a keyword
+    search for "what", "is" or "did".
+
+    Only positions after the first token are examined, so a leading
+    question remains :func:`_opens_a_question`'s business and the
+    behaviour of a sentence that opens as one is untouched.
+    """
+    for index in range(1, len(tokens) - 1):
+        opener = tokens[index]
+        following = tokens[index + 1]
+        if opener in INVERTING_AUXILIARIES and following in INVERTED_SUBJECTS:
+            return True
+        if (
+            opener in WH_QUESTIONS
+            and following in INVERTING_AUXILIARIES
+            and tokens[index + 2] in INVERTED_SUBJECTS
+        ):
+            return True
+    return False
+
+
 def assess(normalized: Normalized, intent: str) -> str:
     """Judge whether ``intent`` is being requested or merely mentioned.
 
@@ -174,12 +252,18 @@ def assess(normalized: Normalized, intent: str) -> str:
     if not tokens:
         return NEUTRAL
 
-    # 1. An explicit request cue, or a sentence that opens as a question, is
-    #    the user asking. This is checked first so no later rule can talk a
-    #    real command out of being run.
+    # 1. An explicit request cue, or a question, is the user asking. This
+    #    is checked first so no later rule can talk a real command out of
+    #    being run. A question counts in two positions: opening the
+    #    utterance, and opening a clause later on ("we discussed the
+    #    weather, what is it now"). The remark rules below all sit after
+    #    this one, which is what keeps an explicit ask from being talked
+    #    out of running.
     if any(token in REQUEST_CUES for token in tokens):
         return REQUEST
     if _opens_a_question(tokens):
+        return REQUEST
+    if _has_trailing_question(tokens):
         return REQUEST
 
     # 2. Hedging marks a remark.
