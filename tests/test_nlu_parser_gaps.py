@@ -74,10 +74,27 @@ RECORDED_CORPUS_SIZE = 47
 #: Counts measured when this corpus was first run, against the parser as
 #: it stands at the end of Phase 5 Step 11. Pinned so a later change to
 #: the parser has to move them deliberately.
-RECORDED_CORRECT = 47
-RECORDED_UNEXPECTED = 0
+#:
+#: **Step 13 moved this deliberately.** Three of these cases were the
+#: aliases that batch added, and they now match:
+#:
+#:     "is it going to rain"      -> weather
+#:     "will it rain tomorrow"    -> weather
+#:     "put on a song"            -> youtube
+#:
+#: They are reported as *unexpected matches* because their labels in
+#: :mod:`tests.nlu_parser_gap_corpus` say they should return no-match,
+#: and those labels are deliberately left untouched. The corpus recorded
+#: what the parser did when it was first measured; Step 12 diagnosed all
+#: three as
+#: :data:`~tests.nlu_parser_gap_corpus.CAUSE_MISSING_ALIAS`, and the fix
+#: is what the corpus predicted. The gap counts below are unchanged,
+#: because :attr:`~tests.nlu_parser_gap_corpus.ParserGapCase.is_gap`
+#: reads the recorded cause, not the live result.
+RECORDED_CORRECT = 44
+RECORDED_UNEXPECTED = 3
 RECORDED_UNEXPECTED_NO_MATCH = 0
-RECORDED_UNEXPECTED_MATCH = 0
+RECORDED_UNEXPECTED_MATCH = 3
 RECORDED_WRONG_INTENT = 0
 RECORDED_AMBIGUOUS = 0
 
@@ -512,6 +529,23 @@ class TestMeasurement:
         report = build_report()
         for cause in sorted({r.case.cause for r in gaps()}):
             assert cause in report, cause
+
+    def test_step_thirteen_closed_three_of_these(self):
+        """The three unexpected matches are the aliases Step 13 added.
+
+        Named one at a time so the next reader sees that a growing
+        "unexpected match" count is not drift. Each of these was
+        recorded in Step 12 as a missing alias, and each now resolves.
+        The corpus label still says no-match, and is left that way on
+        purpose: the corpus is a record of the first measurement, not a
+        target the code is bent to satisfy.
+        """
+        assert {
+            r.case.utterance for r in by_result(RESULT_UNEXPECTED_MATCH)
+        } == {"is it going to rain", "will it rain tomorrow", "put on a song"}
+        for utterance in ("is it going to rain", "will it rain tomorrow", "put on a song"):
+            case = next(c for c in CORPUS if c.utterance == utterance)
+            assert case.expected == NO_MATCH, utterance
 
     def test_the_report_names_every_gap(self):
         report = build_report()

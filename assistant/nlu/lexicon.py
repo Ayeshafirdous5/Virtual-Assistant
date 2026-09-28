@@ -66,8 +66,51 @@ AliasMap = Mapping[str, Sequence[str]]
 #: while a sentence that only mentions the noun is left alone. Entries below
 #: are therefore either unambiguous on their own, such as "forecast", or
 #: already carry their own verb, such as "jot down".
+#:
+#: Batch 1 (Phase 5, Step 13)
+#: --------------------------
+#: Four entries were added from the fifteen candidates the parser-gap
+#: measurement judged fixable. Each was measured against narrative
+#: sentences **before** being added, and the ones that produced false
+#: positives were dropped rather than qualified:
+#:
+#: ==================  =========  ==================================
+#: alias               intent     why this one was safe
+#: ==================  =========  ==================================
+#: "amuse me"         jokes      carries its own imperative verb and
+#:                              sits beside "make me laugh"
+#: "put on a song"     youtube    carries its own verb and sits beside
+#:                              the "play a song" family
+#: "will it rain"      weather    a weather question; no other tool
+#:                              could claim the word "rain"
+#: "is it going to     weather    the commonest spoken form of the
+#: rain"                          same question
+#: ==================  =========  ==================================
+#:
+#: Rejected after measurement, and still absent below. The first group
+#: matched a narrative sentence once added, so each would have introduced
+#: a false positive: "amuse me" ("he will amuse me later"), "define" ("the
+#: problem is hard to define"), "crack me up" ("he will crack me up"),
+#: "look that up" ("I will look that up later") and "in the news today"
+#: ("he was big in the news today").
+#:
+#: The second group is bare nouns, which the rule above already rejects:
+#: "celsius", "gossip", "trivia". The third is "power off", because the
+#: ``system`` intent can close the application.
+#:
+#: The survivors share one property worth stating: each is a phrase that
+#: **cannot** appear in a sentence merely about the topic. "put on a
+#: song" is a request; "he put on a brave face" is not, and does not
+#: contain the phrase. "will it rain" asks; "it will rain in the story"
+#: does not, and does not either.
 COMMON_ALIASES: dict[str, tuple[str, ...]] = {
-    "weather": ("forecast", "how hot", "how cold"),
+    "weather": (
+        "forecast",
+        "how hot",
+        "how cold",
+        "will it rain",
+        "is it going to rain",
+    ),
     "news": ("current affairs", "what happened today"),
     "jokes": ("make me laugh",),
     "information": ("look up", "search for", "tell me about"),
@@ -78,6 +121,7 @@ COMMON_ALIASES: dict[str, tuple[str, ...]] = {
         "play the video",
         "on youtube",
         "from youtube",
+        "put on a song",
     ),
     "history": ("what did i say", "command log", "activity log"),
     "notes": ("jot down", "write down"),
