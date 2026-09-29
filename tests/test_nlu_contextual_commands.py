@@ -98,11 +98,15 @@ RECORDED_CORPUS_SIZE = 60
 #: Measured at the end of Phase 5 Step 14, with no production change in
 #: this step. Every case matches its expectation except the one live bug
 #: this corpus found, which is deliberately left mismatched.
-RECORDED_AS_EXPECTED = 59
-RECORDED_MISMATCHES = 1
+#: Step 15 recorded 59 of 60 correct, with one named live bug. The Step 17
+#: subject check in the system guard closed that bug, so the whole corpus is
+#: now correct. A bare count would let it be "fixed" by editing a label, so
+#: the count is pinned and the bug is named below.
+RECORDED_AS_EXPECTED = 60
+RECORDED_MISMATCHES = 0
 
-#: The single mismatch, named. A bare count would let it be "fixed" by
-#: editing the label.
+#: The mismatch that used to be live, kept as a name so the closure can be
+#: seen rather than inferred from a number.
 RECORDED_MISMATCH = "I should quit smoking"
 
 #: How the cases divide. Pinned because these numbers are the step's
@@ -434,15 +438,21 @@ class TestMeasurement:
         assert len(mismatches()) == RECORDED_MISMATCHES
 
     def test_the_single_mismatch_is_the_live_bug(self):
-        """Named, so it can never be closed by editing the label."""
-        assert [m.case.utterance for m in mismatches()] == [RECORDED_MISMATCH]
+        """Step 17 closed it. The name is kept so the closure is visible."""
+        assert mismatches() == []
+        assert RECORDED_MISMATCH  # the bug is still named, not forgotten
         case = next(c for c in CORPUS if c.utterance == RECORDED_MISMATCH)
         assert case.expected == NO_MATCH
         assert case.significance == MISS_IS_DANGEROUS
         assert case.classification == UNSAFE
 
-    def test_the_live_bug_really_terminates_the_assistant(self):
-        """End to end. This is what makes the step worth doing."""
+    def test_the_live_bug_is_now_fixed(self):
+        """End to end, inverted: the Step 15 bug must no longer terminate.
+
+        This asserted the opposite in Step 15. Step 17's subject check in the
+        system guard changed the behaviour deliberately, so the assertion
+        moved with it rather than being deleted.
+        """
         from assistant.app import resolve_detail
         from assistant.core.context import AppContext
         from assistant.tools import build_default_router
@@ -460,8 +470,8 @@ class TestMeasurement:
         resolution = resolve_detail(
             ctx, build_default_router(), RECORDED_MISMATCH, _lexicon()
         )
-        assert resolution.tool_name == "system"
-        assert resolution.status == "resolved"
+        assert resolution.tool_name != "system"
+        assert resolution.status == "no-match"
 
     def test_the_classification_counts_are_pinned(self):
         counts = {label: 0 for label in CLASSIFICATIONS}

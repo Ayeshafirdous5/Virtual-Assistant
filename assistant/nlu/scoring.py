@@ -73,6 +73,29 @@ SYSTEM_MIN_SCORE = 0.95
 #: "goodbye is in the dictionary" is not read as a command to quit.
 SYSTEM_TAIL_TOKENS = 2
 
+#: Words that name the **speaker** or a **third party**.
+#:
+#: A system trigger preceded by one of these is almost never an order to the
+#: assistant. "I should quit smoking", "she decided to quit smoking" and
+#: "he plans to quit smoking" all use a command word as the object of a
+#: personal decision, and all of them used to terminate the application.
+#:
+#: Second person is deliberately **absent**. "you can quit now" and "goodbye
+#: assistant" address the assistant, which is exactly the case the guard is
+#: meant to allow, so "you" must never block.
+#:
+#: This is scoped to the ``system`` intent alone. A sentence such as "I need
+#: a joke" is untouched, because the guard is never consulted for it.
+SELF_OTHER_SUBJECTS = frozenset(
+    {
+        "i", "me", "my", "mine", "myself",
+        "we", "us", "our", "ours", "ourselves",
+        "he", "him", "his", "himself",
+        "she", "her", "hers", "herself",
+        "they", "them", "their", "theirs", "themselves",
+    }
+)
+
 #: Words that cancel a nearby trigger.
 NEGATIONS = frozenset({"not", "no", "never", "dont", "stop", "nor"})
 #: How far back to look for a negation. Kept tight on purpose: every shape
@@ -246,16 +269,37 @@ def is_inflected_form(token: str, pattern: str) -> bool:
 def _passes_system_guard(text: str, candidate: Candidate, index: int) -> bool:
     """Extra safety for the exit intent.
 
-    Two conditions, both required. The score must be near perfect, which
-    rules out every fuzzy and containment candidate, and the trigger must sit
-    in the closing words of the utterance, which stops "goodbye is in the
-    dictionary" from being taken as a request to quit.
+    Three conditions, all required. The score must be near perfect, which
+    rules out every fuzzy and containment candidate; no word naming the
+    speaker or a third party may appear before the trigger; and the trigger
+    must sit in the closing words of the utterance.
+
+    The **subject** condition is the one that stops a command word being read
+    as an order. The window alone was sized against a single leading case,
+    ``"goodbye is in the dictionary"``, and it cannot tell a trigger that
+    genuinely closes the sentence from one that merely sits near the end:
+
+        "i should quit smoking"    4 tokens, "quit" at index 2
+        "i want to exit early"     4 tokens, "exit" at index 3
+
+    Both satisfied the window and both terminated the assistant, because
+    the trigger was followed by an object, not because anyone was being
+    told to quit. Requiring that nobody is named before the trigger is the
+    structural distinction between an order and a statement, and it is why
+    the two conditions are kept together: the window still blocks the
+    leading mentions it was written for, and the subject check blocks the
+    trailing ones it was not.
     """
     if candidate.intent != SYSTEM_INTENT:
         return True
     if candidate.score < SYSTEM_MIN_SCORE:
         return False
-    tail_start = max(0, len(text.split()) - SYSTEM_TAIL_TOKENS)
+
+    tokens = text.split()
+    if index > 0 and any(token in SELF_OTHER_SUBJECTS for token in tokens[:index]):
+        return False
+
+    tail_start = max(0, len(tokens) - SYSTEM_TAIL_TOKENS)
     return index >= tail_start
 
 

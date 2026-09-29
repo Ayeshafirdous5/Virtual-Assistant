@@ -31,6 +31,7 @@ from assistant.nlu import framing
 from assistant.nlu.normalize import normalize
 from assistant.nlu.parser import parse
 from assistant.nlu.scoring import (
+    SELF_OTHER_SUBJECTS,
     SYSTEM_MIN_SCORE,
     SYSTEM_TAIL_TOKENS,
     score_intents,
@@ -42,12 +43,26 @@ EXPECT_BLOCKED = "blocked"
 #: The user meant "shut the assistant down"; the system tool should run.
 EXPECT_EXIT = "exit"
 
-#: How many dangerous sentences are known to reach the system tool today.
-#: Pinned so the risk cannot shrink or grow unnoticed. Measured, not
-#: guessed: 5 of the 6 personal-decision sentences, and 7 once the subtler
-#: lexical traps are included.
-RECORDED_CORE_RISK = 5
-RECORDED_TOTAL_RISK = 7
+#: Dangerous sentences that reached the system tool **before** Step 17.
+#: Step 17's subject check in the system guard closed every one of them, and
+#: the two counts are pinned so the closure cannot be undone silently and so
+#: a regression is visible. Measured, not guessed.
+RECORDED_CORE_RISK = 0
+RECORDED_TOTAL_RISK = 0
+RECORDED_CORE_RISK_BEFORE = 5
+RECORDED_TOTAL_RISK_BEFORE = 7
+
+#: First- or third-person exit phrasings that Step 17 also blocked. They
+#: worked before, and are recorded here as the deliberate cost of the rule
+#: rather than left as a surprise.
+NEWLY_BLOCKED_BY_SUBJECT_CHECK = [
+    "I need to exit",
+    "let me quit",
+    "can I quit",
+    "should I exit",
+    "I will quit now",
+    "us exit now",
+]
 
 
 class Silent:
@@ -286,59 +301,39 @@ class TestGuardMechanics:
 # A/B/D: the dangerous shapes.
 # ----------------------------------------------------------------------
 class TestKnownRisk:
-    def test_RISK_quit_smoking_terminates_the_assistant(self, router, lexicon):
-        """Step 15's finding, pinned so it cannot be forgotten.
+    def test_RISK_quit_smoking_no_longer_terminates_the_assistant(
+        self, router, lexicon
+    ):
+        """Step 15's finding, now closed by the Step 17 subject check.
 
-        This asserts the *current, dangerous* behaviour on purpose. It is
-        written so that fixing the problem makes this test fail, forcing the
-        fix to be deliberate and this file to be updated with it.
+        Step 16 pinned this test to assert the *dangerous* behaviour so that
+        fixing the problem could not happen by accident. Step 17 fixed it
+        deliberately, so the assertion moves with the behaviour and keeps the
+        sentence named.
         """
         result = probe("I should quit smoking", router, lexicon)
-        assert result.executes, (
-            "the risk no longer reproduces; update this file deliberately"
-        )
-        assert result.tool_name == "system"
-        assert result.parsed_name == "system"
-        assert result.score == 1.0
-        assert result.confidence == "clear"
+        assert not result.executes, "the Step 15 regression has returned"
+        assert result.tool_name != "system"
+        assert result.parsed_name is None
+        assert result.status == "no-match"
 
-    def test_RISK_the_guard_is_what_lets_it_through(self, router, lexicon):
-        result = probe("I should quit smoking", router, lexicon)
-        assert result.classification == "reaches-system"
-        assert result.framing == framing.NEUTRAL
-        assert result.status == "resolved"
-
-    def test_known_risk_count_is_pinned(self, router, lexicon):
+    def test_RISK_every_dangerous_case_is_now_blocked(self, router, lexicon):
         dangerous = reaching_system(DANGEROUS + PERSONAL_DECISIONS, router, lexicon)
-        assert len(dangerous) == RECORDED_CORE_RISK, [p.describe() for p in dangerous]
+        assert dangerous == [], [p.describe() for p in dangerous]
 
-    def test_risk_includes_the_step_15_sentence(self, router, lexicon):
-        spoken = {p.utterance for p in reaching_system(router=router, lexicon=lexicon)}
-        assert "I should quit smoking" in spoken
+    def test_RISK_the_risk_counts_are_zero(self, router, lexicon):
+        blocked_expected = [c for c in ALL_CASES if c.expected == EXPECT_BLOCKED]
+        assert len(reaching_system(blocked_expected, router, lexicon)) == RECORDED_TOTAL_RISK
 
-    def test_every_expected_blocked_case_is_blocked_or_a_pinned_risk(self, router, lexicon):
-        """Safety is asserted, but known gaps are named rather than hidden."""
+    def test_the_before_counts_are_preserved_for_the_record(self):
+        """Step 16's measurements, kept so the fix can be compared with it."""
+        assert RECORDED_CORE_RISK_BEFORE == 5
+        assert RECORDED_TOTAL_RISK_BEFORE == 7
+
+    def test_every_expected_blocked_case_is_blocked(self, router, lexicon):
         for case in DANGEROUS + PERSONAL_DECISIONS + LEXICAL_TRAPS:
             result = probe(case.utterance, router, lexicon)
-            if result.executes:
-                continue  # pinned above as a counted risk
-            assert result.classification in (
-                "parser-no-match",
-                "blocked-by-framing",
-                "blocked-by-parser-or-guard",
-            ), result.describe()
-
-    def test_lexical_trap_risk_count(self, router, lexicon):
-        """Pinned, not asserted away. Several reach the system tool."""
-        risky = reaching_system(LEXICAL_TRAPS, router, lexicon)
-        assert len(risky) >= 2, [p.describe() for p in risky]
-
-    def test_total_dangerous_count_across_all_groups(self, router, lexicon):
-        blocked_expected = [
-            c for c in ALL_CASES if c.expected == EXPECT_BLOCKED
-        ]
-        risky = reaching_system(blocked_expected, router, lexicon)
-        assert len(risky) == RECORDED_TOTAL_RISK, [p.describe() for p in risky]
+            assert not result.executes, result.describe()
 
 
 # ----------------------------------------------------------------------
@@ -389,3 +384,125 @@ class TestClassification:
         report = _trace_report(router, lexicon)
         with capsys.disabled():
             print(report)
+
+
+# ----------------------------------------------------------------------
+# Step 17 regression coverage.
+# ----------------------------------------------------------------------
+#: Ordinary sentences that contain a system word but name nobody. The
+#: subject check must not be needed to stop them, and must not break them
+#: either: they are all already refused, by the window or by framing.
+ADDITIONAL_ORDINARY_SENTENCES = [
+    "we talked about quitting yesterday",
+    "my neighbour quit his job",
+    "the exit ramp was closed",
+    "there is a stop sign ahead",
+    "she told me to exit early",
+]
+
+#: Natural questions. These must resolve as questions, not be refused as
+#: dangerous, whether or not they contain a system word.
+QUESTION_SHAPED = [
+    "can I quit",
+    "should I exit",
+    "how do I exit",
+]
+
+#: Command-like sentences that contain a pronoun. The rule must not be a
+#: blanket pronoun ban, so these are checked against other intents, where
+#: the system guard is never consulted.
+PRONOUN_COMMANDS_OTHER_INTENTS = [
+    ("I need a joke", "jokes"),
+    ("I want information about Hyderabad", "information"),
+    ("I want to hear the news", "news"),
+    ("I want a joke", "jokes"),
+]
+
+#: The window's original target. The subject check must not have displaced
+#: it, and must not become the only thing standing between the assistant
+#: and a phrase lookup.
+LEADING_POSITION_SAFETY = [
+    "goodbye is in the dictionary",
+    "the exit was closed",
+    "the quit smoking plan failed",
+]
+
+
+class TestSubjectCheck:
+    def test_the_rule_is_a_subject_check_not_a_pronoun_ban(self, router, lexicon):
+        """Constraint 4: first person must not be globally rejected."""
+        for utterance, expected in PRONOUN_COMMANDS_OTHER_INTENTS:
+            result = probe(utterance, router, lexicon)
+            assert result.parsed_name == expected, result.describe()
+            assert result.tool_name == expected
+
+    def test_first_person_questions_are_still_questions(self, router, lexicon):
+        for utterance in QUESTION_SHAPED:
+            result = probe(utterance, router, lexicon)
+            assert not result.executes, result.describe()
+
+    def test_the_newly_blocked_cost_is_recorded(self, router, lexicon):
+        """The price of the rule is named, not hidden."""
+        for utterance in NEWLY_BLOCKED_BY_SUBJECT_CHECK:
+            result = probe(utterance, router, lexicon)
+            assert not result.executes, result.describe()
+
+    def test_second_person_is_never_a_blocking_subject(self):
+        assert "you" not in SELF_OTHER_SUBJECTS
+        assert "your" not in SELF_OTHER_SUBJECTS
+
+    def test_the_list_covers_first_and_third_person_only(self):
+        for word in ("i", "me", "we", "us", "he", "him", "she", "her", "they", "them"):
+            assert word in SELF_OTHER_SUBJECTS, word
+
+    def test_other_intents_never_consult_the_guard(self, router, lexicon):
+        """A first-person sentence for another intent is untouched."""
+        for utterance, expected in PRONOUN_COMMANDS_OTHER_INTENTS:
+            assert probe(utterance, router, lexicon).parsed_name == expected
+
+
+class TestLeadingPositionStillSafe:
+    @pytest.mark.parametrize("utterance", LEADING_POSITION_SAFETY)
+    def test_remain_blocked(self, router, lexicon, utterance):
+        result = probe(utterance, router, lexicon)
+        assert not result.executes, result.describe()
+
+    def test_the_window_is_unchanged(self):
+        assert SYSTEM_TAIL_TOKENS == 2
+
+    def test_the_window_still_blocks_a_leading_trigger_on_its_own(self):
+        """Proves the two conditions are independent, not one replacing the other."""
+        from assistant.nlu.scoring import SYSTEM_INTENT, _passes_system_guard
+
+        candidate = type("C", (), {"intent": SYSTEM_INTENT, "score": 1.0})()
+        text = "goodbye is in the dictionary"
+        assert _passes_system_guard(text, candidate, 0) is False
+
+
+class TestAdditionalOrdinarySentences:
+    @pytest.mark.parametrize("utterance", ADDITIONAL_ORDINARY_SENTENCES)
+    def test_never_terminates_the_assistant(self, router, lexicon, utterance):
+        result = probe(utterance, router, lexicon)
+        assert not result.executes, result.describe()
+
+
+class TestNoLegacyBypass:
+    """The guard rejects at the scoring stage, so no fallback can revive it."""
+
+    @pytest.mark.parametrize(
+        "case", DANGEROUS + PERSONAL_DECISIONS, ids=lambda c: c.utterance
+    )
+    def test_parser_returns_none(self, router, lexicon, case):
+        assert probe(case.utterance, router, lexicon).parsed_name is None
+
+    @pytest.mark.parametrize(
+        "case", DANGEROUS + PERSONAL_DECISIONS, ids=lambda c: c.utterance
+    )
+    def test_the_legacy_router_still_matches_but_is_not_used(
+        self, router, lexicon, case
+    ):
+        """The old router would still misroute these; the NLU must not ask it."""
+        result = probe(case.utterance, router, lexicon)
+        assert result.legacy_match == "system", "the fallback is the real risk"
+        assert result.tool_name != "system"
+        assert result.status == "no-match"
