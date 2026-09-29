@@ -255,11 +255,27 @@ def by_class(items, name: str) -> list[Trace]:
 
 
 #: Measured when this corpus was first run. Pinned.
+#:
+#: **Step 20 moved these deliberately.** The apposition guard in
+#: :mod:`assistant.nlu.scoring` closed six of the seven dangerous
+#: executions, so six findings moved from :data:`DANGEROUS_EXECUTION` to
+#: :data:`SAFE_BLOCK`:
+#:
+#:     what does quit mean          define exit
+#:     what does exit mean          explain quit
+#:     what does goodbye mean       what is the meaning of quit
+#:
+#: Only "do you want to quit" is still dangerous, and Step 20 was
+#: explicitly told to leave it alone. It is measured here and in
+#: ``tests/test_nlu_system_safety_step20.py``, not quietly dropped.
 RECORDED_SAFE_COMMAND = 12
-RECORDED_SAFE_BLOCK = 9
-RECORDED_DANGEROUS = 7
+RECORDED_SAFE_BLOCK = 15
+RECORDED_DANGEROUS = 1
 RECORDED_AMBIGUOUS = 3
 RECORDED_UNSUPPORTED = 0
+
+#: The one case deliberately left open by Step 20.
+RECORDED_REMAINING_DANGER = "do you want to quit"
 
 
 def _report(router, lexicon) -> str:
@@ -311,30 +327,78 @@ class TestCorpus:
 # The three findings, traced stage by stage
 # ----------------------------------------------------------------------
 class TestStep18Findings:
-    @pytest.mark.parametrize(
-        "utterance",
-        ["what does quit mean", "what does exit mean", "do you want to quit"],
-    )
-    def test_each_reaches_the_system_tool(self, router, lexicon, utterance):
-        case = QuestionCase(utterance, NO, GROUP_MEANING, "finding")
-        trace = Trace(case, router, lexicon)
+    """Kept because the Step 18 findings are what motivated Step 20.
+
+    Two of the three no longer execute. The trace is kept rather than
+    deleted, because "the finding no longer reproduces" is the evidence
+    that the fix worked, and the third case is the one Step 20 was told
+    to leave alone.
+    """
+
+    #: Closed by Step 20: an apposition marker now sits before the trigger.
+    CLOSED_BY_STEP_20 = ("what does quit mean", "what does exit mean")
+
+    #: Still open, deliberately measured rather than silently dropped.
+    STILL_OPEN = ("do you want to quit",)
+
+    @pytest.mark.parametrize("utterance", CLOSED_BY_STEP_20)
+    def test_the_closed_findings_no_longer_execute(self, router, lexicon, utterance):
+        trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, "finding"),
+                      router, lexicon)
+        assert not trace.executes, "the fix was undone"
+        assert trace.classification == SAFE_BLOCK
+
+    @pytest.mark.parametrize("utterance", STILL_OPEN)
+    def test_the_open_finding_still_executes(self, router, lexicon, utterance):
+        """Step 20's instruction was to leave this one alone."""
+        trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, "finding"),
+                      router, lexicon)
         assert trace.executes, "the finding no longer reproduces"
         assert trace.classification == DANGEROUS_EXECUTION
+        assert utterance == RECORDED_REMAINING_DANGER
 
-    def test_the_guard_passes_every_finding(self, router, lexicon):
-        """All three of the guard's conditions hold, so it cannot help."""
-        for utterance in ("what does quit mean", "what does exit mean",
-                          "do you want to quit"):
+    def test_the_guard_no_longer_passes_the_closed_findings(self, router, lexicon):
+        """The apposition condition is what now stops them.
+
+        Score, window and subject all still hold, so they cannot be
+        asserted through the trace: the guard filters the candidate out
+        and no system candidate survives to be scored. The marker's
+        presence in the token stream is asserted instead, which is the
+        actual cause.
+        """
+        from assistant.nlu.normalize import normalize
+        from assistant.nlu.scoring import DEFINITION_MARKERS
+
+        for utterance in self.CLOSED_BY_STEP_20:
+            trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
+                          router, lexicon)
+            # The guard dropped the candidate, so the trace has no trigger
+            # to report. The marker's place in the token stream is asserted
+            # instead, because that is the actual cause.
+            tokens = normalize(utterance).tokens
+            at = tokens.index("quit" if "quit" in tokens else "exit")
+            assert at > 0, utterance
+            assert tokens[at - 1] in DEFINITION_MARKERS, utterance
+            assert trace.score == 0.0, utterance
+            assert not trace.executes, utterance
+
+    def test_the_open_finding_still_passes_every_condition(self, router, lexicon):
+        """Why it survived: the token before "quit" is "to", not a marker."""
+        for utterance in self.STILL_OPEN:
             trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
                           router, lexicon)
             assert trace.score >= 0.95
             assert trace.in_window, utterance
             assert not trace.subject_before, utterance
+            assert trace.executes, utterance
 
-    def test_framing_is_consulted_and_says_request(self, router, lexicon):
-        """The crux: framing is reached, and it actively allows the command."""
-        for utterance in ("what does quit mean", "what does exit mean",
-                          "do you want to quit"):
+    def test_framing_is_consulted_only_for_the_open_finding(self, router, lexicon):
+        """The crux, updated: framing is now reached for one case, not three."""
+        for utterance in self.CLOSED_BY_STEP_20:
+            trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
+                          router, lexicon)
+            assert not trace.framing_consulted, utterance
+        for utterance in self.STILL_OPEN:
             trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
                           router, lexicon)
             assert trace.framing_consulted, utterance
@@ -422,15 +486,23 @@ class TestStructuralFindings:
                           router, lexicon)
             assert not trace.executes, utterance
 
-    def test_the_meaning_family_is_not_covered_today(self, router, lexicon):
-        """Asking a word's meaning is the open family."""
+    def test_the_meaning_family_is_no_longer_covered_by_accident(
+        self, router, lexicon
+    ):
+        """Asking a word's meaning was the open family. Step 20 closed it.
+
+        These six were *deliberately* safe rather than safe by shape, and
+        the test is retained in its inverted form so the family cannot
+        reopen without someone noticing.
+        """
         for utterance in ("what does quit mean", "what does exit mean",
                           "what does goodbye mean",
                           "what is the meaning of quit", "define exit",
                           "explain quit"):
             trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
                           router, lexicon)
-            assert trace.executes, utterance
+            assert not trace.executes, utterance
+            assert trace.classification == SAFE_BLOCK, utterance
 
     def test_two_meaning_questions_are_safe_for_structural_reasons(
         self, router, lexicon
@@ -448,13 +520,13 @@ class TestStructuralFindings:
                           router, lexicon)
             assert not trace.executes, utterance
 
-    def test_the_guard_cannot_separate_safe_from_dangerous(self, router, lexicon):
-        """The central finding of this step.
+    def test_the_guard_cannot_separate_them_on_its_own(self, router, lexicon):
+        """The finding that forced a fourth condition, and it still holds.
 
-        Every genuine command and every dangerous question is a 1.000 exact
-        match with no subject before the trigger, and the trigger sits inside
-        the closing window. The guard has nothing left to go on, so any fix
-        must read information the guard does not currently look at.
+        Every genuine command and the one remaining dangerous question is
+        a 1.000 exact match with no subject before the trigger, inside the
+        closing window. The first three conditions say nothing about the
+        difference, which is why the guard needed a fourth.
 
         Two-word triggers are excluded because their start index does not
         behave the same way: "shut down" is a safe command that the window
@@ -470,16 +542,17 @@ class TestStructuralFindings:
             assert trace.score == 1.0, trace.case.utterance
             assert trace.in_window, trace.case.utterance
             assert not trace.subject_before, trace.case.utterance
-        assert checked >= 15, checked
+        assert checked >= 12, checked
 
     def test_a_definition_frame_before_the_trigger_is_the_usable_signal(
         self, router, lexicon
     ):
-        """Six of the seven share one structural marker.
+        """The signal Step 19 identified, now carrying no work left to do.
 
         "does", "do", "of", "define" and "explain" sit immediately before
         the trigger, making it the thing being defined rather than the
-        thing being done. No genuine command in this corpus has one.
+        thing being done. No genuine command in this corpus has one, which
+        is what made the boundary safe to add.
         """
         frames = {"does", "do", "of", "define", "explain"}
         dangerous = by_class(traces(router, lexicon), DANGEROUS_EXECUTION)
@@ -488,8 +561,9 @@ class TestStructuralFindings:
             if t.tokens[: t.trigger_index]
             and t.tokens[: t.trigger_index][-1] in frames
         ]
-        # Six of seven. The exception is named, not hidden.
-        assert len(with_frame) == 6, [t.case.utterance for t in dangerous]
+        # None of the six that used to be here still is. The one survivor
+        # has no frame, which is precisely why it is still dangerous.
+        assert len(with_frame) == 0, [t.case.utterance for t in with_frame]
         exception = [t for t in dangerous if t not in with_frame]
         assert [t.case.utterance for t in exception] == ["do you want to quit"]
 

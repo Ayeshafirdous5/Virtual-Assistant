@@ -13,8 +13,12 @@ from assistant.nlu.lexicon import build_lexicon
 from assistant.nlu.normalize import normalize
 from assistant.nlu.scoring import (
     CONTAINMENT_SCORE,
+    DEFINITION_MARKERS,
     EXACT_SCORE,
     PHRASE_SCORE,
+    SELF_OTHER_SUBJECTS,
+    SYSTEM_MIN_SCORE,
+    SYSTEM_TAIL_TOKENS,
     Candidate,
     is_inflected_form,
     is_negated,
@@ -352,6 +356,178 @@ class TestContainment:
         for candidate in score_intents(normalize("play the weather news"), lexicon):
             if candidate.method == "containment":
                 assert candidate.score == CONTAINMENT_SCORE
+
+
+# ----------------------------------------------------------------------
+# Definition and explanation apposition (Step 20)
+# ----------------------------------------------------------------------
+#: The six sentences that used to terminate the application. Each puts
+#: the trigger in apposition: the word is being named, not acted on.
+DEFINITION_FPS = (
+    "what does quit mean",
+    "what does exit mean",
+    "what does goodbye mean",
+    "what is the meaning of quit",
+    "define exit",
+    "explain quit",
+)
+
+#: Genuine orders, which must all keep working.
+GENUINE_SYSTEM = (
+    "exit",
+    "quit",
+    "goodbye",
+    "ok goodbye",
+    "ok pls exit now",
+    "goodbye assistant",
+)
+
+#: The seven Step 17 dangers, all of which must stay blocked.
+STEP_17_FPS = (
+    "I should quit smoking",
+    "I want to quit smoking",
+    "she decided to quit smoking",
+    "he plans to quit smoking",
+    "I need to quit smoking",
+    "he quit smoking",
+    "I want to exit early",
+)
+
+#: Ordinary sentences that merely contain system vocabulary.
+ORDINARY_SENTENCES = (
+    "the exit sign is red",
+    "quit your browser",
+    "goodbye is in the dictionary",
+    "define my own words",
+    "explain the rule to me",
+)
+
+#: Deliberately **not** fixed by this step. Recorded so it cannot be
+#: half-fixed by accident and forgotten. Fixing it needs a different rule
+#: and is not attempted here.
+STILL_OPEN_UTTERANCE = "do you want to quit"
+
+
+class TestDefinitionAppositionIsRejected:
+    """A trigger in apposition is a word being explained, not an order."""
+
+    @pytest.mark.parametrize("utterance", DEFINITION_FPS)
+    def test_no_system_candidate_is_produced(self, utterance, lexicon):
+        assert find(utterance, lexicon, "system") is None
+
+    @pytest.mark.parametrize(
+        "utterance,marker",
+        [
+            ("what does quit mean", "does"),
+            ("what does exit mean", "does"),
+            ("what does goodbye mean", "does"),
+            ("what is the meaning of quit", "of"),
+            ("define exit", "define"),
+            ("explain quit", "explain"),
+        ],
+    )
+    def test_each_is_refused_by_its_own_marker(self, utterance, marker, lexicon):
+        """The refusal is the marker sitting immediately before it."""
+        assert marker in DEFINITION_MARKERS
+        assert find(utterance, lexicon, "system") is None
+
+    def test_the_markers_are_a_closed_set(self):
+        assert DEFINITION_MARKERS == frozenset(
+            {"does", "do", "of", "define", "explain"}
+        )
+
+    def test_you_was_not_added_to_the_subject_set(self):
+        """A constraint of this step, asserted rather than trusted."""
+        assert "you" not in SELF_OTHER_SUBJECTS
+        assert "your" not in SELF_OTHER_SUBJECTS
+
+    def test_ordinary_sentences_are_unaffected(self, lexicon):
+        for utterance in ORDINARY_SENTENCES:
+            assert find(utterance, lexicon, "system") is None, utterance
+
+    def test_the_guard_is_still_scoped_to_system(self, lexicon):
+        """A definition word must not become a general question rule.
+
+        Scored with and without one, so the comparison is evidence
+        rather than a claim: a real request keeps exactly its score.
+        """
+        without = score_intents(normalize("the weather now"), lexicon)
+        with_marker = score_intents(normalize("define the weather now"), lexicon)
+        plain = {c.intent: c.score for c in without}
+        marked = {c.intent: c.score for c in with_marker}
+        assert plain["weather"] == marked["weather"]
+        assert marked["weather"] == EXACT_SCORE
+
+
+class TestGenuineSystemCommandsSurvive:
+    @pytest.mark.parametrize("utterance", GENUINE_SYSTEM)
+    def test_still_resolves(self, utterance, lexicon):
+        assert find(utterance, lexicon, "system") is not None, utterance
+
+    @pytest.mark.parametrize("utterance", STEP_17_FPS)
+    def test_the_step_seventeen_dangers_stay_blocked(self, utterance, lexicon):
+        assert find(utterance, lexicon, "system") is None, utterance
+
+    def test_no_constant_was_moved(self):
+        """Scope of this step, asserted rather than described."""
+        assert SYSTEM_TAIL_TOKENS == 2
+
+
+class TestMultiWordTriggersAreExempt:
+    """The guard must measure from the trigger's **start**.
+
+    "shut down" is the case that proves it. Measured from the last word
+    the guard would read the wrong neighbour and could refuse a genuine
+    order, because "please" sits before "shut" but nothing relevant
+    sits before "down".
+    """
+
+    @pytest.fixture
+    def phrase_system_lexicon(self):
+        return build_lexicon([("system", ("shut down", "exit", "quit"))])
+
+    def test_a_phrase_command_still_works(self, phrase_system_lexicon):
+        assert find("shut down", phrase_system_lexicon, "system") is not None
+        assert find("please shut down", phrase_system_lexicon, "system") is not None
+
+    def test_a_marker_before_a_phrase_does_not_refuse_it(self, phrase_system_lexicon):
+        """The exemption is what keeps this a single-word rule."""
+        assert find("define shut down", phrase_system_lexicon, "system") is not None
+
+    def test_the_index_is_the_start_of_the_phrase(self, phrase_system_lexicon):
+        """Proved on the real matcher, not on the string."""
+        text = normalize("please shut down").text
+        assert text.split() == ["please", "shut", "down"]
+        candidate = find("please shut down", phrase_system_lexicon, "system")
+        assert candidate is not None
+        assert candidate.trigger == "shut down"
+
+    def test_what_does_shut_down_mean_produces_nothing(self, phrase_system_lexicon):
+        assert find("what does shut down mean", phrase_system_lexicon, "system") is None
+
+    def test_a_single_word_trigger_beside_the_phrase_is_still_guarded(
+        self, phrase_system_lexicon
+    ):
+        """The exemption is per trigger, not a hole in the rule."""
+        assert find("what does exit mean", phrase_system_lexicon, "system") is None
+
+
+class TestStillOpenDeliberately:
+    """A separate safety problem, left measured rather than half-fixed."""
+
+    def test_do_you_want_to_quit_is_not_caught(self, lexicon):
+        """The token before "quit" is "to", which is not a marker."""
+        tokens = normalize("do you want to quit").tokens
+        assert tokens[tokens.index("quit") - 1] == "to"
+        assert "to" not in DEFINITION_MARKERS
+        assert find("do you want to quit", lexicon, "system") is not None
+
+    def test_it_is_recorded_rather_than_ignored(self):
+        """Named here so the next step starts from a number, not a search."""
+        assert STILL_OPEN_UTTERANCE == "do you want to quit"
+
+        assert SYSTEM_MIN_SCORE == 0.95
+
 
     def test_exact_outranks_containment_for_same_intent(self, lexicon):
         cand = find("play lofi", lexicon, "youtube")

@@ -471,12 +471,41 @@ class TestLeadingPositionStillSafe:
         assert SYSTEM_TAIL_TOKENS == 2
 
     def test_the_window_still_blocks_a_leading_trigger_on_its_own(self):
-        """Proves the two conditions are independent, not one replacing the other."""
-        from assistant.nlu.scoring import SYSTEM_INTENT, _passes_system_guard
+        """Proves the two conditions are independent, not one replacing the other.
 
-        candidate = type("C", (), {"intent": SYSTEM_INTENT, "score": 1.0})()
+        Built as a real :class:`~assistant.nlu.scoring.Candidate` rather
+        than a stub: Step 20 added a fourth condition that reads
+        ``candidate.trigger``, so a partial stand-in would no longer be
+        a fair test of the guard.
+        """
+        from assistant.nlu.scoring import (
+            SYSTEM_INTENT,
+            Candidate,
+            _passes_system_guard,
+        )
+
+        candidate = Candidate(
+            intent=SYSTEM_INTENT,
+            score=1.0,
+            trigger="goodbye",
+            method="exact",
+        )
         text = "goodbye is in the dictionary"
         assert _passes_system_guard(text, candidate, 0) is False
+
+    def test_the_new_condition_does_not_replace_the_window(self):
+        """The apposition rule must not swallow the window's own case."""
+        from assistant.nlu.scoring import (
+            SYSTEM_INTENT,
+            Candidate,
+            _passes_system_guard,
+        )
+
+        # A genuine order, with no marker in front of it.
+        order = Candidate(
+            intent=SYSTEM_INTENT, score=1.0, trigger="goodbye", method="exact"
+        )
+        assert _passes_system_guard("ok goodbye", order, 2) is True
 
 
 class TestAdditionalOrdinarySentences:

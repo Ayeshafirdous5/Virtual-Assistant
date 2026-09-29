@@ -96,6 +96,35 @@ SELF_OTHER_SUBJECTS = frozenset(
     }
 )
 
+#: Words that put a following noun into **apposition**: it is being
+#: named or explained, not acted on.
+#:
+#:     "what does quit mean"          "does" before "quit"
+#:     "what is the meaning of quit"   "of"   before "quit"
+#:     "define exit"                   "define" before "exit"
+#:     "explain quit"                  "explain" before "quit"
+#:
+#: All four used to terminate the application. The subject rule above
+#: cannot catch them, because none of them names a speaker or a third
+#: party: "what does quit mean" names nobody at all, and the subject
+#: window sees only "what does".
+#:
+#: Scoped deliberately. This is **not** a general question rule: a
+#: trigger is refused only when one of these words sits immediately
+#: before it, and only for a **single-word** trigger. Two consequences
+#: are load-bearing:
+#:
+#: * A multi-word trigger such as "shut down" is exempt, so
+#:   "please shut down" keeps working. Were the check applied to the
+#:   trigger's last token instead of its start, "down" would be treated
+#:   as the trigger and the guard would read the wrong neighbour.
+#: * A bare "do" is in the set because "what do you mean by quit" and
+#:   "what does quit mean" are the same shape, but "do you want to
+#:   quit" is **not** caught: the token before "quit" there is "to".
+#:   That sentence is a separate safety problem and is left for a
+#:   later step rather than half-fixed here.
+DEFINITION_MARKERS = frozenset({"does", "do", "of", "define", "explain"})
+
 #: Words that cancel a nearby trigger.
 NEGATIONS = frozenset({"not", "no", "never", "dont", "stop", "nor"})
 #: How far back to look for a negation. Kept tight on purpose: every shape
@@ -269,10 +298,11 @@ def is_inflected_form(token: str, pattern: str) -> bool:
 def _passes_system_guard(text: str, candidate: Candidate, index: int) -> bool:
     """Extra safety for the exit intent.
 
-    Three conditions, all required. The score must be near perfect, which
+    Four conditions, all required. The score must be near perfect, which
     rules out every fuzzy and containment candidate; no word naming the
-    speaker or a third party may appear before the trigger; and the trigger
-    must sit in the closing words of the utterance.
+    speaker or a third party may appear before the trigger; no
+    definition word may sit immediately before a single-word trigger; and
+    the trigger must sit in the closing words of the utterance.
 
     The **subject** condition is the one that stops a command word being read
     as an order. The window alone was sized against a single leading case,
@@ -289,6 +319,18 @@ def _passes_system_guard(text: str, candidate: Candidate, index: int) -> bool:
     the two conditions are kept together: the window still blocks the
     leading mentions it was written for, and the subject check blocks the
     trailing ones it was not.
+
+    The **apposition** condition catches a shape neither of the others can
+    see, because it names nobody at all:
+
+        "what does quit mean"          "does" before "quit"
+        "what is the meaning of quit"   "of"   before "quit"
+        "define exit"                   "define" before "exit"
+
+    ``index`` is the start of the matched trigger, so a multi-word
+    trigger is measured from its first word. That is what keeps "shut
+    down" safe: the neighbours of ``shut`` and of ``down`` are different,
+    and only the former is consulted.
     """
     if candidate.intent != SYSTEM_INTENT:
         return True
@@ -298,6 +340,12 @@ def _passes_system_guard(text: str, candidate: Candidate, index: int) -> bool:
     tokens = text.split()
     if index > 0 and any(token in SELF_OTHER_SUBJECTS for token in tokens[:index]):
         return False
+
+    # A definition or an explanation puts the trigger in apposition.
+    # Multi-word triggers are exempt, so "please shut down" is untouched.
+    if " " not in candidate.trigger and index > 0:
+        if tokens[index - 1] in DEFINITION_MARKERS:
+            return False
 
     tail_start = max(0, len(tokens) - SYSTEM_TAIL_TOKENS)
     return index >= tail_start
