@@ -169,11 +169,11 @@ class TestRegistration:
 
 
 class TestDefaultRegistration:
-    def test_registers_nine_unique_tools(self):
+    def test_registers_ten_unique_tools(self):
         r = build_default_router()
         names = [t.name for t in r.tools]
-        assert len(names) == 9
-        assert len(set(names)) == 9
+        assert len(names) == 10
+        assert len(set(names)) == 10
 
     def test_expected_tools_in_expected_order(self):
         r = build_default_router()
@@ -184,6 +184,7 @@ class TestDefaultRegistration:
             "jokes",
             "information",
             "youtube",
+            "analytics",
             "history",
             "notes",
             "system",

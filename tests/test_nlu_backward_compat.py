@@ -2,8 +2,8 @@
 
 The promise this file protects is narrow and important: **integrating the
 NLU must not break a command that already worked.** Every entry in
-:data:`CORPUS` is a clean, intended command for one of the nine tools. For
-each one the legacy router and the NLU must name the same tool.
+:data:`CORPUS` is a clean, intended command for one of the registered tools.
+For each one the legacy router and the NLU must name the same tool.
 
 The corpus holds only unambiguous commands. Semantically tangled sentences
 belong in ``test_nlu_integration.py``, which asserts what the assistant
@@ -18,8 +18,8 @@ from assistant.app import build_runtime_lexicon, resolve
 from assistant.core.router import NoMatch
 from assistant.tools import build_default_router
 
-#: Every tool, with the plain commands a user would actually say. The nine
-#: keys are the complete registered tool list, so this doubles as a check
+#: Every tool, with the plain commands a user would actually say. The keys
+#: are the complete registered tool list, so this doubles as a check
 #: that no tool has been left out of the integration.
 CORPUS: dict[str, list[str]] = {
     "weather": ["weather", "what is the weather", "weather in Hyderabad"],
@@ -28,6 +28,7 @@ CORPUS: dict[str, list[str]] = {
     "jokes": ["joke", "tell me a joke"],
     "information": ["information", "information about python"],
     "youtube": ["play lofi beats", "play a song", "play music", "play a video"],
+    "analytics": ["show my analytics", "usage statistics"],
     "history": ["history", "what did I ask"],
     "notes": ["note buy milk", "notes", "list notes", "show me my notes"],
     "system": ["exit", "quit", "goodbye"],
@@ -50,8 +51,8 @@ def _legacy_name(router, utterance):
 
 
 class TestCorpusCoversEveryTool:
-    def test_all_nine_tools_are_represented(self):
-        assert len(CORPUS) == 9
+    def test_all_ten_tools_are_represented(self):
+        assert len(CORPUS) == 10
         assert set(CORPUS) == {t.name for t in build_default_router().tools}
 
     def test_corpus_is_not_empty(self):

@@ -14,6 +14,7 @@ from __future__ import annotations
 from assistant.core.context import AppContext
 from assistant.core.router import Router
 from assistant.core.tool import Tool
+from assistant.tools.analytics import AnalyticsTool
 from assistant.tools.facts import FactsTool
 from assistant.tools.history import HistoryTool
 from assistant.tools.jokes import JokesTool
@@ -25,6 +26,7 @@ from assistant.tools.wikipedia import WikipediaTool
 from assistant.tools.youtube import YouTubeTool
 
 __all__ = [
+    "AnalyticsTool",
     "FactsTool",
     "HistoryTool",
     "JokesTool",
@@ -40,6 +42,8 @@ __all__ = [
 # Registration order is deliberate and deterministic. More specific tools are
 # listed before broader ones; ties in the router are broken by this order.
 # SystemTool stays last so exit and quit are matched as late as possible.
+# AnalyticsTool sits next to HistoryTool because both read the same table and
+# neither competes with the other's patterns.
 _DEFAULT_TOOLS: tuple[type[Tool], ...] = (
     WeatherTool,
     NewsTool,
@@ -47,6 +51,7 @@ _DEFAULT_TOOLS: tuple[type[Tool], ...] = (
     JokesTool,
     WikipediaTool,
     YouTubeTool,
+    AnalyticsTool,
     HistoryTool,
     NoteTool,
     SystemTool,
