@@ -1,7 +1,17 @@
 """Measurement of the ``do you want to`` system-safety family.
 
-This step is **measurement only**. No production rule is changed, no
-alias is added, and no existing safety rule is touched.
+Step 21 was **measurement only**: no production rule changed, no alias
+was added, and no existing safety rule was touched. This module keeps
+that measurement.
+
+**Step 22 has since acted on it.** The want-frame condition added to
+:func:`assistant.nlu.scoring._passes_system_guard` refused eight of the
+ten recorded dangers, so the live numbers moved from 10 to 2. The
+assertions that describe what was *measured* therefore read from
+:data:`DANGEROUS_FAMILY` rather than from a live classification, and
+:data:`RECORDED_DANGEROUS` is pinned at the new value. The live
+guarantee is pinned in
+:mod:`tests.test_nlu_system_want_frame_step22`.
 
 What is being measured
 -----------------------
@@ -78,6 +88,7 @@ from tests.nlu_system_preference_question_corpus import (
     DANGEROUS_EXECUTION,
     DANGEROUS_FAMILY,
     LOAD_BEARING_COMMANDS,
+    PREFERENCE_QUESTIONS,
     SAFE_BLOCK,
     SAFE_COMMAND,
     UNSUPPORTED,
@@ -89,9 +100,25 @@ from tests.nlu_system_preference_question_corpus import (
 RECORDED_CORPUS_SIZE = 58
 
 #: Measured at the end of Phase 5 Step 20, with no production change in
-#: this step. Pinned so a later change has to move them deliberately.
-RECORDED_DANGEROUS = len(DANGEROUS_FAMILY)
-RECORDED_SAFE_COMMAND = 0
+#: this step. Pinned.
+#:
+#: **Step 22 moved these deliberately.** The want-frame condition in
+#: :mod:`assistant.nlu.scoring` closed the eight preference-frame
+#: executions, taking :data:`RECORDED_DANGEROUS` from 10 to 2:
+#:
+#:     do you want to quit          do you want to exit
+#:     do you want to shut down     do you want to goodbye
+#:     do you want to bye           you want to quit
+#:     you want to exit             do you really want to quit
+#:
+#: The two that remain are the conversational ones, which Step 22 was
+#: explicitly told not to touch. They are still measured, and they are
+#: still a defect.
+RECORDED_DANGEROUS = 2
+RECORDED_SAFE_COMMAND = 16
+
+#: The two Step 22 was told to leave alone, still counted as defects.
+RECORDED_REMAINING_DANGERS = ("plans to quit", "nothing to quit over")
 
 
 @functools.lru_cache(maxsize=1)
@@ -316,29 +343,50 @@ class TestCorpus:
 # ----------------------------------------------------------------------
 class TestQuestionOneIsItUniquelyDangerous:
     def test_the_family_is_larger_than_one_verb(self):
-        found = {m.case.utterance for m in by_class(DANGEROUS_EXECUTION)}
-        assert found == set(DANGEROUS_FAMILY)
-        assert len(found) > 1, "the step assumed a family; check it"
+        """The Step 21 finding, which is why the step assumed a family.
+
+        :data:`DANGEROUS_FAMILY` records what was measured then and is
+        not recomputed, so this stays a statement about the measurement
+        rather than about live behaviour.
+        """
+        assert len(DANGEROUS_FAMILY) > 1, "the step assumed a family; check it"
 
     def test_the_original_sentence_is_in_it(self):
         assert "do you want to quit" in DANGEROUS_FAMILY
 
+    def test_the_family_is_now_only_the_two_conversational_cases(self):
+        """Step 22 closed eight of the ten; two were left for a later step."""
+        found = {m.case.utterance for m in by_class(DANGEROUS_EXECUTION)}
+        assert found == set(RECORDED_REMAINING_DANGERS)
+
 
 class TestQuestionTwoDoesTheVerbMatter:
-    def test_every_system_trigger_is_reached(self):
-        """Replacing the verb changes nothing. The frame is the cause."""
+    def test_every_system_trigger_was_reached(self):
+        """Step 21 replaced the verb and found the frame was the cause.
+
+        Recorded as history: :data:`DANGEROUS_FAMILY` holds all five and
+        each was a live execution at the end of Step 21. Step 22 refused
+        every one of them, which the next test now pins.
+        """
+        for verb in ("quit", "exit", "goodbye", "bye", "shut down"):
+            assert f"do you want to {verb}" in DANGEROUS_FAMILY, verb
+
+    def test_every_system_trigger_is_refused_now(self):
+        """The same five, after Step 22. None of them runs any more."""
         for verb in ("quit", "exit", "goodbye", "bye", "shut down"):
             utterance = f"do you want to {verb}"
             item = next(m for m in measurements() if m.case.utterance == utterance)
-            assert item.classification == DANGEROUS_EXECUTION, utterance
+            assert not item.executes, utterance
+            assert item.classification != DANGEROUS_EXECUTION, utterance
 
-    def test_the_phrase_trigger_is_reached_too(self):
+    def test_the_phrase_trigger_is_refused_too(self):
+        """"shut down" is measured from the start of the trigger."""
         item = next(
             m for m in measurements()
             if m.case.utterance == "do you want to shut down"
         )
-        assert item.candidate.trigger == "shut down"
-        assert item.executes
+        assert not item.executes
+        assert "do you want to shut down" in DANGEROUS_FAMILY
 
 
 class TestQuestionThreeDoesTheSubjectDecide:
@@ -375,19 +423,19 @@ class TestQuestionFourIsWantASignal:
     def test_the_frame_is_want_plus_you_as_subject(self):
         """Both halves are needed, and only together are they dangerous.
 
-        Restricted to the preference family, because two of the
-        dangerous cases are conversational and reach the same place by a
-        different route: "plans to quit" has no subject at all.
+        Recorded against :data:`DANGEROUS_FAMILY` rather than against the
+        live measurement, because the eight preference cases no longer
+        execute. The structural claim of Step 21 is a statement about
+        those eight sentences, and it does not stop being true because
+        Step 22 acted on it.
         """
-        family = [
-            item
-            for item in by_class(DANGEROUS_EXECUTION)
-            if item.case.category == CATEGORY_PREFERENCE
-        ]
+        preference = {case.utterance for case in PREFERENCE_QUESTIONS}
+        family = [u for u in DANGEROUS_FAMILY if u in preference]
         assert family
-        for item in family:
-            assert "want" in item.normalized, item.case.utterance
-            assert "you" in item.normalized, item.case.utterance
+        for utterance in family:
+            tokens = normalize(utterance).tokens
+            assert "want" in tokens, utterance
+            assert "you" in tokens, utterance
 
     def test_the_dangerous_set_has_a_second_route(self):
         """Two dangerous cases are not preference questions at all.

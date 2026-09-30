@@ -125,6 +125,32 @@ SELF_OTHER_SUBJECTS = frozenset(
 #:   later step rather than half-fixed here.
 DEFINITION_MARKERS = frozenset({"does", "do", "of", "define", "explain"})
 
+#: Inflected forms of "want", used only to recognise a **want frame**.
+#:
+#: The frame this exists to catch is "you ... want to <system trigger>":
+#:
+#:     "do you want to quit"       a question about the assistant
+#:     "you want to exit"          a statement about the assistant
+#:
+#: A want frame alone decides nothing. "I want to quit smoking" and
+#: "do you want me to quit" both contain one, and both are already
+#: refused by the subject rule because a real subject precedes the
+#: trigger. What is unsafe is specifically **"you"** in that frame,
+#: because "you" is the one pronoun the subject rule cannot use.
+#:
+#: The word ``to`` is load-bearing and is *not* being used as a safety
+#: marker on its own. It is read together with a want form, so the
+#: structure that matters is "want to" directly before the trigger:
+#:
+#:     "you want to quit"    "want to" before "quit"   -> refused
+#:     "you want quit"       "want" before "quit"      -> allowed
+#:
+#: Reading "to" alone would break "time to quit", "ready to quit" and
+#: "try to quit" while fixing "plans to quit"; Step 21 measured that,
+#: and :data:`WANT_FORMS` plus the adjacency requirement is what keeps
+#: the two apart.
+WANT_FORMS = frozenset({"want", "wants"})
+
 #: Words that cancel a nearby trigger.
 NEGATIONS = frozenset({"not", "no", "never", "dont", "stop", "nor"})
 #: How far back to look for a negation. Kept tight on purpose: every shape
@@ -295,14 +321,43 @@ def is_inflected_form(token: str, pattern: str) -> bool:
     return 0 < extra <= MAX_INFLECTION_SUFFIX
 
 
+def _is_want_frame_about_you(tokens: list[str], index: int) -> bool:
+    """True when a want frame about the assistant governs this trigger.
+
+    The structure, measured in Step 21 and quoted in
+    :data:`WANT_FORMS`, is::
+
+        ... you ... want to <trigger>
+
+    Two marks are required and either alone is refused as evidence:
+
+    * a want form, somewhere in the words before the trigger, and
+    * the token immediately before the trigger is ``to``,
+
+    together with ``you`` somewhere before the trigger. The second mark
+    is what separates a want *frame* from the ordinary imperative, so
+    "you want quit" is still allowed and only "you want to quit" is
+    not.
+
+    ``index`` is the **start** of the matched trigger, so a two-word
+    trigger such as "shut down" is measured against the words before
+    "shut", and "do you want to shut down" is refused.
+    """
+    if index <= 1 or tokens[index - 1] != "to":
+        return False
+    before = tokens[:index]
+    return "you" in before and any(token in WANT_FORMS for token in before)
+
+
 def _passes_system_guard(text: str, candidate: Candidate, index: int) -> bool:
     """Extra safety for the exit intent.
 
-    Four conditions, all required. The score must be near perfect, which
+    Five conditions, all required. The score must be near perfect, which
     rules out every fuzzy and containment candidate; no word naming the
     speaker or a third party may appear before the trigger; no
-    definition word may sit immediately before a single-word trigger; and
-    the trigger must sit in the closing words of the utterance.
+    definition word may sit immediately before a single-word trigger; no
+    want frame about the assistant may govern the trigger; and the
+    trigger must sit in the closing words of the utterance.
 
     The **subject** condition is the one that stops a command word being read
     as an order. The window alone was sized against a single leading case,
@@ -331,6 +386,18 @@ def _passes_system_guard(text: str, candidate: Candidate, index: int) -> bool:
     trigger is measured from its first word. That is what keeps "shut
     down" safe: the neighbours of ``shut`` and of ``down`` are different,
     and only the former is consulted.
+
+    The **want frame** condition closes the last family Step 21 found.
+    It is placed after the subject rule rather than instead of it, so
+    "I want to quit smoking" and "do you want me to quit" are still
+    refused by the rule that was written for them, and the new
+    condition only ever handles the case where "you" is the subject.
+
+    One known cost, accepted rather than engineered away: "if you want
+    to quit now" is a genuine order and is refused, because the
+    condition cannot tell a conditional wrapper from a question without
+    parsing the clause. Refusing it costs the user one retry; allowing
+    it would cost a wrong answer, so the asymmetry is deliberate.
     """
     if candidate.intent != SYSTEM_INTENT:
         return True
@@ -346,6 +413,12 @@ def _passes_system_guard(text: str, candidate: Candidate, index: int) -> bool:
     if " " not in candidate.trigger and index > 0:
         if tokens[index - 1] in DEFINITION_MARKERS:
             return False
+
+    # A want frame about the assistant: "do you want to quit". "you" is
+    # the one pronoun the subject rule cannot use, so a question about
+    # whether the assistant should stop is refused here instead.
+    if _is_want_frame_about_you(tokens, index):
+        return False
 
     tail_start = max(0, len(tokens) - SYSTEM_TAIL_TOKENS)
     return index >= tail_start

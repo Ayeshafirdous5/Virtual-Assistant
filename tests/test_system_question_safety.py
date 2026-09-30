@@ -265,16 +265,18 @@ def by_class(items, name: str) -> list[Trace]:
 #:     what does exit mean          explain quit
 #:     what does goodbye mean       what is the meaning of quit
 #:
-#: Only "do you want to quit" is still dangerous, and Step 20 was
-#: explicitly told to leave it alone. It is measured here and in
-#: ``tests/test_nlu_system_safety_step20.py``, not quietly dropped.
+#: **Step 22 moved them again.** The want-frame condition closed the one
+#: case Step 20 was told to leave alone, so :data:`RECORDED_DANGEROUS`
+#: went from 1 to 0 and :data:`RECORDED_SAFE_BLOCK` from 15 to 16.
+#: Every Step 18 finding in this corpus is now a safe block, which is
+#: why the dangerous class is empty rather than merely small.
 RECORDED_SAFE_COMMAND = 12
-RECORDED_SAFE_BLOCK = 15
-RECORDED_DANGEROUS = 1
+RECORDED_SAFE_BLOCK = 16
+RECORDED_DANGEROUS = 0
 RECORDED_AMBIGUOUS = 3
 RECORDED_UNSUPPORTED = 0
 
-#: The one case deliberately left open by Step 20.
+#: The one case Step 20 left open and Step 22 closed.
 RECORDED_REMAINING_DANGER = "do you want to quit"
 
 
@@ -338,8 +340,13 @@ class TestStep18Findings:
     #: Closed by Step 20: an apposition marker now sits before the trigger.
     CLOSED_BY_STEP_20 = ("what does quit mean", "what does exit mean")
 
-    #: Still open, deliberately measured rather than silently dropped.
-    STILL_OPEN = ("do you want to quit",)
+    #: Closed by Step 22: a want frame about the assistant now governs
+    #: the trigger. Same class as the pair above, different condition.
+    CLOSED_BY_STEP_22 = ("do you want to quit",)
+
+    #: Step 20 deliberately left this one open. **Step 22 closed it**, and
+    #: it is measured here as a safe block rather than dropped.
+    STILL_OPEN = CLOSED_BY_STEP_22
 
     @pytest.mark.parametrize("utterance", CLOSED_BY_STEP_20)
     def test_the_closed_findings_no_longer_execute(self, router, lexicon, utterance):
@@ -348,17 +355,22 @@ class TestStep18Findings:
         assert not trace.executes, "the fix was undone"
         assert trace.classification == SAFE_BLOCK
 
-    @pytest.mark.parametrize("utterance", STILL_OPEN)
-    def test_the_open_finding_still_executes(self, router, lexicon, utterance):
-        """Step 20's instruction was to leave this one alone."""
+    @pytest.mark.parametrize("utterance", CLOSED_BY_STEP_22)
+    def test_the_step22_finding_no_longer_executes(self, router, lexicon, utterance):
+        """The want frame, once the only surviving finding.
+
+        It is in the same class as the Step 20 ones now, reached by a
+        different condition, and asserted separately so that a
+        regression in either is distinguishable.
+        """
         trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, "finding"),
                       router, lexicon)
-        assert trace.executes, "the finding no longer reproduces"
-        assert trace.classification == DANGEROUS_EXECUTION
+        assert not trace.executes, "the finding no longer reproduces"
+        assert trace.classification == SAFE_BLOCK
         assert utterance == RECORDED_REMAINING_DANGER
 
     def test_the_guard_no_longer_passes_the_closed_findings(self, router, lexicon):
-        """The apposition condition is what now stops them.
+        """The apposition condition is what stops them.
 
         Score, window and subject all still hold, so they cannot be
         asserted through the trace: the guard filters the candidate out
@@ -382,27 +394,40 @@ class TestStep18Findings:
             assert trace.score == 0.0, utterance
             assert not trace.executes, utterance
 
-    def test_the_open_finding_still_passes_every_condition(self, router, lexicon):
-        """Why it survived: the token before "quit" is "to", not a marker."""
-        for utterance in self.STILL_OPEN:
+    def test_the_want_frame_is_what_stops_the_step22_finding(
+        self, router, lexicon
+    ):
+        """Why it stopped: the fifth condition, not the first three.
+
+        Score, window and subject all still hold exactly as they did in
+        Step 20. The only thing that changed is the want frame, so the
+        same three conditions are asserted here and the frame is pinned
+        separately, which is what makes this a structural refusal rather
+        than a lower threshold.
+        """
+        from assistant.nlu.normalize import normalize
+        from assistant.nlu.scoring import _is_want_frame_about_you
+
+        for utterance in self.CLOSED_BY_STEP_22:
             trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
                           router, lexicon)
-            assert trace.score >= 0.95
-            assert trace.in_window, utterance
-            assert not trace.subject_before, utterance
-            assert trace.executes, utterance
+            assert trace.score == 0.0, utterance
+            assert not trace.executes, utterance
+            tokens = normalize(utterance).tokens
+            at = tokens.index("quit" if "quit" in tokens else "exit")
+            assert _is_want_frame_about_you(tokens, at), utterance
 
-    def test_framing_is_consulted_only_for_the_open_finding(self, router, lexicon):
-        """The crux, updated: framing is now reached for one case, not three."""
-        for utterance in self.CLOSED_BY_STEP_20:
+    def test_framing_is_never_reached_for_a_refused_case(self, router, lexicon):
+        """Refused before the parser, so framing never sees any of them.
+
+        This was the Step 20 evidence that framing could not own the fix:
+        it was consulted and it said REQUEST. Now the guard fires first,
+        so the parser returns no-match and framing is not reached at all.
+        """
+        for utterance in self.CLOSED_BY_STEP_20 + self.CLOSED_BY_STEP_22:
             trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
                           router, lexicon)
             assert not trace.framing_consulted, utterance
-        for utterance in self.STILL_OPEN:
-            trace = Trace(QuestionCase(utterance, NO, GROUP_MEANING, ""),
-                          router, lexicon)
-            assert trace.framing_consulted, utterance
-            assert trace.framing == framing.REQUEST, utterance
 
     def test_framing_is_not_reached_when_the_guard_fires(self, router, lexicon):
         """By contrast, a guarded case never gets as far as framing."""
@@ -523,10 +548,10 @@ class TestStructuralFindings:
     def test_the_guard_cannot_separate_them_on_its_own(self, router, lexicon):
         """The finding that forced a fourth condition, and it still holds.
 
-        Every genuine command and the one remaining dangerous question is
-        a 1.000 exact match with no subject before the trigger, inside the
-        closing window. The first three conditions say nothing about the
-        difference, which is why the guard needed a fourth.
+        Every genuine command is a 1.000 exact match with no subject
+        before the trigger, inside the closing window. The first three
+        conditions say nothing about the difference, which is why the
+        guard needed a fourth and then a fifth.
 
         Two-word triggers are excluded because their start index does not
         behave the same way: "shut down" is a safe command that the window
@@ -542,7 +567,12 @@ class TestStructuralFindings:
             assert trace.score == 1.0, trace.case.utterance
             assert trace.in_window, trace.case.utterance
             assert not trace.subject_before, trace.case.utterance
-        assert checked >= 12, checked
+        # 11 of the 12 genuine commands. "shut down" is skipped above
+        # because its start index is negative, and Step 22 took the
+        # count down by exactly the one dangerous case, which is the
+        # point: the two groups were indistinguishable on these three
+        # conditions and remain so.
+        assert checked == 11, checked
 
     def test_a_definition_frame_before_the_trigger_is_the_usable_signal(
         self, router, lexicon
@@ -561,11 +591,12 @@ class TestStructuralFindings:
             if t.tokens[: t.trigger_index]
             and t.tokens[: t.trigger_index][-1] in frames
         ]
-        # None of the six that used to be here still is. The one survivor
-        # has no frame, which is precisely why it is still dangerous.
+        # None of the six that used to be here still is.
         assert len(with_frame) == 0, [t.case.utterance for t in with_frame]
-        exception = [t for t in dangerous if t not in with_frame]
-        assert [t.case.utterance for t in exception] == ["do you want to quit"]
+        # Step 22 closed the seventh, so there is no exception left to
+        # name. The class is empty rather than merely smaller, which is
+        # the difference between a closed family and a narrowed one.
+        assert dangerous == [], [t.case.utterance for t in dangerous]
 
         for case in GENUINE_COMMANDS:
             trace = Trace(case, router, lexicon)

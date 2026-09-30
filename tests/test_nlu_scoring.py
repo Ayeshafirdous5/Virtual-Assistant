@@ -513,14 +513,24 @@ class TestMultiWordTriggersAreExempt:
 
 
 class TestStillOpenDeliberately:
-    """A separate safety problem, left measured rather than half-fixed."""
+    """A separate safety problem, left measured rather than half-fixed.
 
-    def test_do_you_want_to_quit_is_not_caught(self, lexicon):
-        """The token before "quit" is "to", which is not a marker."""
+    **Closed by Step 22.** The want-frame condition now refuses this
+    sentence, and the family it belongs to. What is left below is the
+    reason it was open here and the record of why it no longer is.
+    """
+
+    def test_do_you_want_to_quit_is_now_caught(self, lexicon):
+        """"to" is still not a marker; the want frame is what refuses it.
+
+        The Step 20 note that "to" cannot be the marker still holds, and
+        is asserted below. What changed is that a second, structural
+        condition now catches the sentence without "to" carrying it.
+        """
         tokens = normalize("do you want to quit").tokens
         assert tokens[tokens.index("quit") - 1] == "to"
         assert "to" not in DEFINITION_MARKERS
-        assert find("do you want to quit", lexicon, "system") is not None
+        assert find("do you want to quit", lexicon, "system") is None
 
     def test_it_is_recorded_rather_than_ignored(self):
         """Named here so the next step starts from a number, not a search."""

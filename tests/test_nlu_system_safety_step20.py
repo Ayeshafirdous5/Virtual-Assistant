@@ -234,14 +234,21 @@ class TestMultiWordTriggerStillWorks:
 
 
 class TestStillOpenDeliberately:
-    """Recorded, not fixed. This step was told to leave it alone."""
+    """Recorded by Step 20, and **closed by Step 22**.
 
-    def test_it_still_executes_and_that_is_known(self, quiet, router):
+    The want-frame condition in :mod:`assistant.nlu.scoring` now refuses
+    this sentence. The structural claim that made the fix possible is
+    unchanged and still asserted below: the token before the trigger is
+    "to", which is not a definition marker, so no amount of reading
+    :data:`DEFINITION_MARKERS` would ever have caught it.
+    """
+
+    def test_it_no_longer_executes(self, quiet, router):
         result = report(STILL_OPEN, quiet, router)
-        assert result["tool"] == "system", result
-        assert result["executes_system"] is True, result
+        assert result["executes_system"] is False, result
+        assert result["tool"] != "system", result
 
-    def test_the_reason_is_structural(self):
+    def test_the_reason_it_was_structural(self):
         """The token before the trigger is "to", which is not a marker."""
         from assistant.nlu.scoring import DEFINITION_MARKERS
 
