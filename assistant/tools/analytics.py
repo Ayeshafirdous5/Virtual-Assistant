@@ -17,9 +17,10 @@ analytics can never stop the assistant.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Sequence
 
-from assistant.analytics import AnalyticsService, AnalyticsSummary
+from assistant.analytics import AnalyticsService, AnalyticsSummary, DateRange
 from assistant.core.context import AppContext
 from assistant.core.tool import Tool
 
@@ -39,6 +40,56 @@ NO_MATCHED_ACTIVITY = (
 TIMESTAMP_LENGTH = 19
 
 
+def _times(count: int) -> str:
+    """Return ``"time"`` or ``"times"`` to agree with ``count``.
+
+    "1 times" is plainly wrong when spoken, and this tool exists to speak.
+    Every count that reaches a sentence goes through here, so the grammar is
+    decided in one place rather than at each of the several call sites.
+    """
+    return "time" if count == 1 else "times"
+
+
+#: Reported modes. Each phrase is checked against these, longest first, so a
+#: more specific request wins over the general summary.
+MODE_TODAY = "today"
+MODE_RECENT = "recent"
+MODE_MOST_USED = "most_used"
+MODE_SUMMARY = "summary"
+
+#: Phrase fragments that select a mode. Every entry is at least two words, so
+#: no single generic word can select a mode on its own. The order matters and
+#: is deliberate: a longer, more specific phrase is listed before the shorter
+#: one it contains, which is what makes "what do I use most today" a
+#: most-used question rather than a today question.
+_MODE_PHRASES: tuple[tuple[str, str], ...] = (
+    ("what do i use most today", MODE_MOST_USED),
+    ("what do i use most", MODE_MOST_USED),
+    ("most used command today", MODE_MOST_USED),
+    ("most used command", MODE_MOST_USED),
+    ("my most used command", MODE_MOST_USED),
+    ("which command do i use most", MODE_MOST_USED),
+    ("today's activity", MODE_TODAY),
+    ("todays activity", MODE_TODAY),
+    ("what did i do today", MODE_TODAY),
+    ("commands today", MODE_TODAY),
+    ("recent activity", MODE_RECENT),
+    ("last 7 days", MODE_RECENT),
+    ("last seven days", MODE_RECENT),
+    ("last 30 days", MODE_RECENT),
+    # "this week" is deliberately absent. Sprint 2 measured it: it is an
+    # 8-character pattern, so it outranks the weather alias "is it going to
+    # rain" inside "is it going to rain this week" and turned that genuine
+    # weather question into an ambiguous match. A time window is not specific
+    # enough on its own to claim an utterance.
+    ("usage summary", MODE_SUMMARY),
+)
+
+#: How many days the ``recent`` mode covers. One week is long enough to show
+#: a habit and short enough that every day in it is worth speaking about.
+RECENT_DAYS = 7
+
+
 class AnalyticsTool(Tool):
     """Summarise recorded usage."""
 
@@ -53,8 +104,18 @@ class AnalyticsTool(Tool):
         there is no competition for them. The list avoids "summary" on its
         own, which is far too generic to claim, and avoids a bare "how many",
         which belongs to the weather aliases.
+
+        The mode phrases are included so a routed utterance can be
+        interpreted, but they never claim an utterance on their own merit:
+        every one contains a word specific enough that no other tool competes
+        for it.
+
+        The list is de-duplicated while preserving order, because a phrase can
+        legitimately appear in both halves -- "what do i use most" is both a
+        base trigger and a mode selector -- and a duplicate pattern would make
+        the help text list the same example twice.
         """
-        return [
+        phrases = [
             "show my analytics",
             "show analytics",
             "usage statistics",
@@ -62,6 +123,27 @@ class AnalyticsTool(Tool):
             "what do i use most",
             "my activity summary",
         ]
+        phrases += [phrase for phrase, _mode in _MODE_PHRASES]
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for phrase in phrases:
+            if phrase not in seen:
+                seen.add(phrase)
+                unique.append(phrase)
+        return unique
+
+    def extract_slots(self, utterance: str, ctx: AppContext) -> dict[str, Any]:
+        """Work out which report the user asked for.
+
+        Returns a dict with a ``mode`` key, defaulting to
+        :data:`MODE_SUMMARY`. ``ctx`` is unused, as in the base class.
+        """
+        text = (utterance or "").lower()
+        for phrase, mode in _MODE_PHRASES:
+            if phrase in text:
+                return {"mode": mode}
+        return {"mode": MODE_SUMMARY}
 
     def execute(
         self, ctx: AppContext, slots: dict[str, Any] | None = None
@@ -69,16 +151,89 @@ class AnalyticsTool(Tool):
         if ctx.db is None:
             return ["Sorry, I have no usage data to show right now."]
 
+        mode = (slots or {}).get("mode", MODE_SUMMARY)
         try:
             service = AnalyticsService(ctx.db)
             summary = service.summary()
             if not summary.has_activity:
                 return [NO_ACTIVITY]
+            if mode == MODE_TODAY:
+                return self._render_today(service)
+            if mode == MODE_MOST_USED:
+                return self._render_most_used(service)
             if summary.unique_tools == 0:
                 return [NO_MATCHED_ACTIVITY]
+            if mode == MODE_RECENT:
+                return self._render_recent(service)
             return self._render(service, summary)
         except Exception as exc:  # noqa: BLE001 - analytics is never critical
             return [f"Sorry, I could not work out my usage right now. {exc}"]
+
+    # ------------------------------------------------------------------
+    # Modes
+    # ------------------------------------------------------------------
+    def _render_today(self, service: AnalyticsService) -> list[str]:
+        """Report only what happened on the current day.
+
+        "Today" is the one figure that genuinely depends on the clock, so it
+        is the one place this tool reads the system date. The report is
+        whatever the stored rows say; nothing is assumed about which timezone
+        the user is in.
+        """
+        today = date.today()
+        window = DateRange.between(today, today)
+        total = service.total_interactions(window)
+        if total == 0:
+            return [f"You have not used me today, {today.isoformat()}."]
+
+        lines = [
+            f"Today, {today.isoformat()}, you have made {total} command"
+            f"{'' if total == 1 else 's'}."
+        ]
+        top = service.most_used_command(window)
+        if top:
+            lines.append(
+                f"The most used was {top.tool_name}, {top.count} {_times(top.count)}."
+            )
+        return lines
+
+    def _render_most_used(self, service: AnalyticsService) -> list[str]:
+        """Report the top few tools and nothing else.
+
+        This answers "what do I use most" with a ranking rather than the full
+        summary. Unresolved commands are excluded by
+        :meth:`AnalyticsService.top_tools`, since "none" is not a feature.
+        """
+        top = service.top_tools(TOP_DAYS)
+        if not top:
+            return [NO_MATCHED_ACTIVITY]
+        lines = ["Here is what you use most:"]
+        for count in top:
+            lines.append(f"{count.tool_name}, {count.count} {_times(count.count)}.")
+        return lines
+
+    def _render_recent(self, service: AnalyticsService) -> list[str]:
+        """Report the last :data:`RECENT_DAYS` days.
+
+        The window is anchored on today and built with
+        :meth:`DateRange.last_days`, so it is explicit rather than a hidden
+        "30 days" the caller never asked for.
+        """
+        window = DateRange.last_days(RECENT_DAYS, date.today())
+        total = service.total_interactions(window)
+        if total == 0:
+            return [f"You have not used me in the last {RECENT_DAYS} days."]
+
+        lines = [
+            f"In the last {RECENT_DAYS} days you have made {total} command"
+            f"{'' if total == 1 else 's'}."
+        ]
+        top = service.most_used_command(window)
+        if top:
+            lines.append(
+                f"You use {top.tool_name} most, {top.count} {_times(top.count)}."
+            )
+        return lines
 
     # ------------------------------------------------------------------
     # Rendering
@@ -96,7 +251,7 @@ class AnalyticsTool(Tool):
         if summary.most_used_tool:
             lines.append(
                 f"You use {summary.most_used_tool} most, "
-                f"{summary.most_used_count} times."
+                f"{summary.most_used_count} {_times(summary.most_used_count)}."
             )
 
         unmatched = service.unmatched_count()

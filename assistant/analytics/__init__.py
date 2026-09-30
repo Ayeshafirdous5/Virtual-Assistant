@@ -21,7 +21,11 @@ from assistant.analytics.service import (
     NOT_A_TOOL,
     AnalyticsService,
     AnalyticsSummary,
+    DashboardReport,
+    DateRange,
+    NotesSummary,
     TimeBucket,
+    ToolUsage,
 )
 
 __all__ = [
@@ -29,5 +33,9 @@ __all__ = [
     "NOT_A_TOOL",
     "AnalyticsService",
     "AnalyticsSummary",
+    "DashboardReport",
+    "DateRange",
+    "NotesSummary",
     "TimeBucket",
+    "ToolUsage",
 ]

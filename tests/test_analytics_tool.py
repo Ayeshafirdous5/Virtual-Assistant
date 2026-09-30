@@ -9,6 +9,8 @@ failure rather than something a user notices.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
 
 from assistant.analytics import AnalyticsSummary
@@ -16,10 +18,16 @@ from assistant.core.context import AppContext
 from assistant.core.database import Database
 from assistant.tools import build_default_router
 from assistant.tools.analytics import (
+    MODE_MOST_USED,
+    MODE_RECENT,
+    MODE_SUMMARY,
+    MODE_TODAY,
     NO_ACTIVITY,
     NO_MATCHED_ACTIVITY,
+    RECENT_DAYS,
     TOP_DAYS,
     AnalyticsTool,
+    _MODE_PHRASES,
     _readable_timestamp,
 )
 
@@ -53,6 +61,11 @@ def add_note(db, body="buy milk", when="2026-09-26 10:00:00"):
 def spoken(tool, ctx) -> str:
     """Run the tool and join its lines into one string for asserting on."""
     return " ".join(tool.execute(ctx))
+
+
+def spoken_with(tool, ctx, slots) -> str:
+    """Run the tool with explicit slots and join the lines."""
+    return " ".join(tool.execute(ctx, slots))
 
 
 # ----------------------------------------------------------------------
@@ -112,7 +125,7 @@ class TestFormatting:
         assert "1 command" in text
         assert "across 1 tool" in text
         assert "over 1 day" in text
-        assert "You use weather most, 1 times." in text
+        assert "You use weather most, 1 time." in text
         assert "You have not saved any notes." in text
 
     def test_pluralisation_with_many(self, tool, live, db):
@@ -338,8 +351,14 @@ class TestToolContract:
         for pattern in tool.patterns():
             assert len(pattern.split()) >= 2, pattern
 
-    def test_extract_slots_defaults_to_empty(self, tool, live):
-        assert tool.extract_slots("show analytics", live) == {}
+    def test_extract_slots_defaults_to_the_summary_mode(self, tool, live):
+        """Sprint 2: the tool now always reports which report it will give.
+
+        The default is the summary, so an utterance that matched the tool but
+        named no mode still produces the full report rather than nothing.
+        """
+        assert tool.extract_slots("show analytics", live) == {"mode": "summary"}
+        assert tool.extract_slots("", live) == {"mode": "summary"}
 
     def test_handle_runs_the_whole_path(self, tool, live, db):
         record(db, tool_name="weather")
@@ -357,6 +376,302 @@ class TestToolContract:
 
     def test_repr(self, tool):
         assert repr(tool) == "<Tool analytics>"
+
+
+# ----------------------------------------------------------------------
+# Sprint 2: reporting modes
+# ----------------------------------------------------------------------
+class TestModeDetection:
+    @pytest.mark.parametrize(
+        "utterance,expected",
+        [
+            ("show analytics", MODE_SUMMARY),
+            ("show my analytics", MODE_SUMMARY),
+            ("usage statistics", MODE_SUMMARY),
+            ("my activity summary", MODE_SUMMARY),
+            ("usage summary", MODE_SUMMARY),
+            ("what do i use most", MODE_MOST_USED),
+            ("what do i use most today", MODE_MOST_USED),
+            ("most used command", MODE_MOST_USED),
+            ("my most used command", MODE_MOST_USED),
+            ("which command do i use most", MODE_MOST_USED),
+            ("today's activity", MODE_TODAY),
+            ("todays activity", MODE_TODAY),
+            ("what did i do today", MODE_TODAY),
+            ("recent activity", MODE_RECENT),
+            ("last 7 days", MODE_RECENT),
+            ("this week", MODE_SUMMARY),  # never a mode: see the tool docstring
+        ],
+    )
+    def test_the_mode_is_read_from_the_utterance(
+        self, tool, live, utterance, expected
+    ):
+        assert tool.extract_slots(utterance, live)["mode"] == expected
+
+    def test_a_longer_phrase_beats_the_shorter_one_it_contains(
+        self, tool, live
+    ):
+        """"...most today" must not be read as a today question."""
+        assert (
+            tool.extract_slots("what do i use most today", live)["mode"]
+            == MODE_MOST_USED
+        )
+
+    def test_an_unrecognised_utterance_falls_back_to_the_summary(
+        self, tool, live
+    ):
+        assert tool.extract_slots("something else entirely", live)["mode"] == (
+            MODE_SUMMARY
+        )
+
+    def test_detection_is_case_insensitive(self, tool, live):
+        assert (
+            tool.extract_slots("SHOW MY ANALYTICS", live)["mode"] == MODE_SUMMARY
+        )
+        assert tool.extract_slots("RECENT ACTIVITY", live)["mode"] == MODE_RECENT
+
+    def test_every_mode_phrase_has_two_or_more_words(self):
+        """No single generic word may select a mode."""
+        for phrase, _mode in _MODE_PHRASES:
+            assert len(phrase.split()) >= 2, phrase
+
+    def test_every_declared_pattern_is_unique(self, tool):
+        patterns = tool.patterns()
+        assert len(patterns) == len(set(patterns))
+
+    def test_the_pattern_list_includes_the_mode_phrases(self, tool):
+        patterns = set(tool.patterns())
+        for phrase, _mode in _MODE_PHRASES:
+            assert phrase in patterns, phrase
+
+
+class TestNoCollisionsWithOtherTools:
+    """Sprint 2 regression: a time window is not a safe pattern.
+
+    ``this week`` was briefly registered and it broke a genuine weather
+    question. As an 8-character pattern it outranked the weather alias
+    ``is it going to rain`` when the two appeared in the same sentence, and
+    ``is it going to rain this week`` became ambiguous instead of reaching
+    the weather tool.
+
+    The general rule this encodes: a phrase may only claim an utterance if it
+    is specific to analytics. A bare time window is not, so none is
+    registered.
+    """
+
+    def test_the_weather_question_resolves_again(self, live):
+        from assistant.app import build_runtime_lexicon, resolve
+
+        router = build_default_router()
+        lexicon = build_runtime_lexicon(router)
+        tool = resolve(live, router, "is it going to rain this week", lexicon)
+        assert tool is not None
+        assert tool.name == "weather", "the analytics tool stole a weather query"
+
+    @pytest.mark.parametrize(
+        "utterance,expected",
+        [
+            ("is it going to rain", "weather"),
+            ("is it going to rain this week", "weather"),
+            ("will it rain this week", "weather"),
+            ("show me this week's weather", "weather"),
+            ("what is the weather", "weather"),
+        ],
+    )
+    def test_weather_phrases_are_unaffected(self, live, utterance, expected):
+        from assistant.app import build_runtime_lexicon, resolve
+
+        router = build_default_router()
+        lexicon = build_runtime_lexicon(router)
+        tool = resolve(live, router, utterance, lexicon)
+        assert tool is not None, utterance
+        assert tool.name == expected, utterance
+
+    @pytest.mark.parametrize("phrase", ["this week", "last week", "today"])
+    def test_no_bare_time_window_is_a_pattern(self, tool, phrase):
+        """The specific rule that prevents the regression recurring."""
+        assert phrase not in tool.patterns()
+
+    def test_no_pattern_is_contained_in_another_tools_alias(self, tool):
+        """No analytics phrase may be a substring of a rival's vocabulary.
+
+        This is a general safety net, not the check that caught ``this week``.
+        That phrase is not a substring of any single alias -- it collided only
+        once it appeared *alongside* one in a longer sentence -- so the routing
+        tests above are what actually guard it. This check covers the simpler
+        case where one tool's vocabulary swallows another's outright.
+        """
+        from assistant.app import COMMON_ALIASES
+
+        analytics_patterns = set(tool.patterns())
+        for intent, aliases in COMMON_ALIASES.items():
+            if intent == "analytics":
+                continue
+            for alias in aliases:
+                for pattern in analytics_patterns:
+                    assert pattern not in alias, (
+                        f"analytics pattern {pattern!r} sits inside the "
+                        f"{intent} alias {alias!r}"
+                    )
+
+    def test_the_other_tools_still_own_their_commands(self, live):
+        from assistant.core.router import NoMatch
+
+        router = build_default_router()
+        for utterance, expected in (
+            ("history", "history"),
+            ("note buy milk", "notes"),
+            ("play a song", "youtube"),
+            ("tell me a joke", "jokes"),
+            ("exit", "system"),
+        ):
+            match = router.find_match(utterance)
+            assert not isinstance(match, NoMatch), utterance
+            assert match.tool_name == expected, utterance
+
+
+class TestPluralisation:
+    """Spoken output must not say "1 times".
+
+    This was wrong in Sprint 1 and every mode that reports a count shared the
+    same mistake. The rule now lives in one helper, so it is pinned there and
+    checked in the output of each mode.
+    """
+
+    def test_the_helper_agrees_with_the_count(self):
+        from assistant.tools.analytics import _times
+
+        assert _times(0) == "times"
+        assert _times(1) == "time"
+        assert _times(2) == "times"
+        assert _times(11) == "times"
+
+    @pytest.mark.parametrize("mode", [MODE_SUMMARY, MODE_MOST_USED])
+    def test_no_mode_ever_says_one_times(self, tool, live, db, mode):
+        record(db, tool_name="weather")
+        record(db, tool_name="weather")
+        record(db, tool_name="notes")
+        text = spoken_with(tool, live, {"mode": mode})
+        assert "1 times" not in text
+
+    def test_the_today_mode_says_time_for_one(self, tool, live, db):
+        today = date.today()
+        record(db, tool_name="weather", when=f"{today} 09:00:00")
+        text = spoken_with(tool, live, {"mode": MODE_TODAY})
+        assert "1 time." in text
+        assert "1 times" not in text
+
+    def test_the_recent_mode_says_time_for_one(self, tool, live, db):
+        record(db, tool_name="weather", when=f"{date.today()} 09:00:00")
+        text = spoken_with(tool, live, {"mode": MODE_RECENT})
+        assert "1 time." in text
+
+
+class TestMostUsedMode:
+    def test_it_ranks_the_tools(self, tool, live, db):
+        for _ in range(3):
+            record(db, tool_name="jokes")
+        record(db, tool_name="weather")
+        lines = tool.execute(live, {"mode": MODE_MOST_USED})
+        assert lines[0] == "Here is what you use most:"
+        assert "jokes, 3 times." in lines
+        assert "weather, 1 time." in lines
+
+    def test_it_never_lists_unmatched(self, tool, live, db):
+        for _ in range(5):
+            record(db, tool_name="none")
+        record(db, tool_name="weather")
+        text = spoken_with(tool, live, {"mode": MODE_MOST_USED})
+        assert "none" not in text
+        assert "weather" in text
+
+    def test_it_says_so_when_nothing_matched(self, tool, live, db):
+        record(db, tool_name="none")
+        assert tool.execute(live, {"mode": MODE_MOST_USED}) == [
+            NO_MATCHED_ACTIVITY
+        ]
+
+    def test_it_works_when_only_unmatched_rows_exist(self, tool, live, db):
+        record(db, tool_name="none")
+        assert tool.execute(live, {"mode": MODE_MOST_USED}) == [
+            NO_MATCHED_ACTIVITY
+        ]
+
+
+class TestTodayMode:
+    """The only clock-dependent mode, so its rows are pinned to the clock.
+
+    Rather than freeze time, the fixture writes rows dated ``date.today()``.
+    That keeps the test correct whenever it runs and proves the window is
+    today's rather than a hard-coded day.
+    """
+
+    def test_it_reports_todays_commands(self, tool, live, db):
+        today = date.today()
+        record(db, tool_name="weather", when=f"{today} 09:00:00")
+        record(db, tool_name="jokes", when=f"{today} 10:00:00")
+        record(db, tool_name="jokes", when=f"{today} 11:00:00")
+        text = spoken_with(tool, live, {"mode": MODE_TODAY})
+        assert f"Today, {today.isoformat()}, you have made 3 commands." in text
+        assert "The most used was jokes, 2 times." in text
+
+    def test_it_excludes_older_rows(self, tool, live, db):
+        today = date.today()
+        record(db, tool_name="weather", when=f"{today} 09:00:00")
+        old = today - timedelta(days=30)
+        for _ in range(5):
+            record(db, tool_name="jokes", when=f"{old} 09:00:00")
+        text = spoken_with(tool, live, {"mode": MODE_TODAY})
+        assert "you have made 1 command." in text
+
+    def test_it_says_so_when_there_is_none_today(self, tool, live, db):
+        old = date.today() - timedelta(days=30)
+        for _ in range(3):
+            record(db, tool_name="weather", when=f"{old} 09:00:00")
+        lines = tool.execute(live, {"mode": MODE_TODAY})
+        assert len(lines) == 1
+        assert "You have not used me today" in lines[0]
+
+    def test_a_single_command_today_is_singular(self, tool, live, db):
+        today = date.today()
+        record(db, tool_name="weather", when=f"{today} 09:00:00")
+        text = spoken_with(tool, live, {"mode": MODE_TODAY})
+        assert "you have made 1 command." in text
+
+
+class TestRecentMode:
+    def test_it_covers_the_last_seven_days(self, tool, live, db):
+        today = date.today()
+        for offset in range(RECENT_DAYS):
+            record(db, tool_name="weather", when=f"{today - timedelta(days=offset)} 09:00:00")
+        text = spoken_with(tool, live, {"mode": MODE_RECENT})
+        assert f"In the last {RECENT_DAYS} days you have made {RECENT_DAYS} commands." in text
+
+    def test_it_excludes_older_rows(self, tool, live, db):
+        today = date.today()
+        record(db, tool_name="weather", when=f"{today} 09:00:00")
+        stale = today - timedelta(days=RECENT_DAYS + 5)
+        for _ in range(9):
+            record(db, tool_name="jokes", when=f"{stale} 09:00:00")
+        text = spoken_with(tool, live, {"mode": MODE_RECENT})
+        assert "you have made 1 command." in text
+
+    def test_it_says_so_when_the_window_is_empty(self, tool, live, db):
+        stale = date.today() - timedelta(days=60)
+        for _ in range(3):
+            record(db, tool_name="weather", when=f"{stale} 09:00:00")
+        lines = tool.execute(live, {"mode": MODE_RECENT})
+        assert len(lines) == 1
+        assert f"You have not used me in the last {RECENT_DAYS} days." in lines[0]
+
+    def test_it_names_the_top_tool_in_the_window(self, tool, live, db):
+        today = date.today()
+        for _ in range(3):
+            record(db, tool_name="jokes", when=f"{today} 09:00:00")
+        record(db, tool_name="weather", when=f"{today} 10:00:00")
+        assert "You use jokes most, 3 times." in spoken_with(
+            tool, live, {"mode": MODE_RECENT}
+        )
 
 
 # ----------------------------------------------------------------------
