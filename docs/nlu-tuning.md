@@ -243,6 +243,98 @@ also rejects `quit the assistant`. Relaxing it to allow the latter would
 put the former back, and the brief forbids changing routing semantics in
 this step.
 
+## Phase 5 closure: the last two conversational cases
+
+Steps 17, 20 and 22 each closed one family of false executions, using a
+signal local to that family. Two cases survived all three and were left
+for a closure pass:
+
+```text
+plans to quit            nothing to quit over
+```
+
+**No production change was made for them, because no reliable boundary
+exists.** This is the measured reason, not a guess.
+
+### What the two cases have in common
+
+Both are a 1.000 exact match on `quit`, in the closing window, with no
+self/third-party subject before the trigger, no definition marker, and
+no want frame. Every condition in `_passes_system_guard` passes, so
+`parse` returns `system` and the router dispatches `SystemTool`. The
+parser is never given a reason to refuse; it reads a bare imperative.
+
+The only structural feature they share is the one immediately before the
+trigger: `to`. `"plans to quit"` is `plans → to → quit`, and
+`"nothing to quit over"` is `nothing → to → quit → over`.
+
+### Why "to" cannot be the fix
+
+`to` is the obvious candidate and it does not survive contact with the
+corpora. Three rules were measured against the pinned expectations:
+
+| Candidate rule | Catches both | Breaks genuine commands | Breaks cases that must still parse |
+| --- | --- | --- | --- |
+| A: `to` immediately before the trigger | yes | none | **3 of 8** |
+| B: nothing permitted after the trigger | **no** | **7 of 15** | none |
+| C: word list `{plans, nothing}` | yes | none | none |
+
+* **Rule A** refuses `time to quit`, `ready to quit`, `try to quit`,
+  `attempt to exit`, `about to quit` and `go to exit` — all of which
+  `test_nlu_system_want_frame_step22.py` pins as still parsing — and it
+  would also newly refuse `I need to exit`, `I want to exit`,
+  `are you ready to exit`, `can I ask you to exit`, `I want you to exit`
+  and `I need you to quit`, all labelled `YES` in
+  `nlu_system_tradeoff_corpus.py`. That is a straight trade of six real
+  commands for two unsafe ones.
+* **Rule B** does not even catch `plans to quit`, which has nothing after
+  the trigger, and it breaks `goodbye assistant`, `shut down`,
+  `you can quit now`, `would you quit now`, `can you shut down`,
+  `would you exit now` and `should you quit now`.
+* **Rule C** works only because it lists the two words in the two
+  sentences. It is not a rule, it is the answer key, and it generalises
+  to nothing.
+
+### The precise reason there is no boundary
+
+`plans to quit` and `time to quit` are identical on every feature the
+guard actually reads:
+
+```text
+feature              plans to quit    time to quit
+trigger_index        2                 2
+token_before         to                to
+in_tail              True              True
+self_other_subject   False             False
+definition_marker    False             False
+want_frame           False             False
+has_you              False             False
+```
+
+Token *count* differs between the two original cases — `nothing to quit
+over` carries a trailing `over` — but nothing in the guard reads length,
+and every feature that is read agrees.
+
+The only real difference is the meaning of the token at index 0.
+Telling `plans` (a speaker's private intention) from `time` (a noun)
+requires knowing what the words *mean*, not how the sentence is
+*shaped*. The scoring layer is deliberately a shape reader — it produces
+numbers from tokens and is documented as containing no grammar. A rule
+that separated these two would be the first genuinely semantic rule in
+the layer, and it would be a two-word lookup table pretending to be one.
+
+The honest options were therefore: ship rule C and mislabel a word list
+as a structural fix, or ship rule A and break six commands. Neither was
+acceptable, so the sprint stopped and recorded the limitation.
+
+### What would actually close it
+
+A subject or beneficiary analysis of the clause in front of the
+infinitive — recognising that `plans` has an understood first-person
+subject and `nothing` is a quantifier over no one. That is a parser
+responsibility, not a scoring one, and it is the natural next increment
+if these two sentences are ever worth refusing.
+
 ## Known limitations
 
 All of these remain true. None was removed because the tuning corpus
@@ -261,6 +353,13 @@ happens not to cover it.
   `<no-match>` in the corpus and recorded here rather than added to
   `COMMON_ALIASES`, because that table is deliberately restricted to
   phrases that name an action.
+* **Two conversational system intents are still unsafe and cannot be
+  closed without breaking correct behaviour.** `plans to quit` and
+  `nothing to quit over` still reach `SystemTool`. Newly recorded by
+  the Phase 5 closure sprint; the reasoning is in
+  [Phase 5 closure](#phase-5-closure-the-last-two-conversational-cases)
+  below. Both are pinned as *known-unsafe* rather than dropped, so the
+  next person to see them knows they were measured and not missed.
 * **Single-shot clarification.** An unusable reply to "Did you mean ...?"
   returns the "didn't understand" wording and does not re-ask.
 * **`ask_follow_up` still bypasses the NLU**, using `router.dispatch` with
