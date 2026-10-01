@@ -1,74 +1,87 @@
 {#
   Base layout for the analytics dashboard.
 
-  Deliberately a hand-written HTML skeleton with no template engine features
-  beyond inheritance: the page is a static shell, and the numbers all arrive
-  already measured in the context. Nothing here computes a statistic.
+  Structure, top to bottom, matching the reading order a reader should
+  take: page title, the range that produced these numbers, then the content
+  the child block supplies, then a quiet note about provenance.
 
-  The "no JavaScript required" note matters. Every figure is rendered into the
-  HTML by the server, so the page is complete and readable with scripting
-  disabled. dashboard.js only adds the charts on top; it never supplies a
-  number that is missing without it.
+  Two accessibility decisions worth stating:
+
+  * The date inputs are wrapped in real <label> elements whose visible text
+    is "From" and "To", so they are named for a screen reader without an
+    extra aria-label that could disagree with what is on screen.
+  * The form posts to "/" and the skip link below jumps to the main
+    landmark, so a keyboard user can reach the data immediately.
+
+  Nothing here computes a statistic. Every figure is rendered from the
+  context, which the routes built from AnalyticsService.
 #}<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Virtual Assistant Analytics{% endblock %}</title>
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}Analytics Dashboard{% endblock %} · Virtual Assistant</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+  {# An empty favicon stops the browser requesting one that is not there. #}
   <link rel="icon" href="data:,">
 </head>
 <body>
+  <a class="sr-only" href="#main">Skip to the analytics</a>
+
   <div class="page">
     <header class="masthead">
       <div class="masthead__text">
         <h1 class="masthead__title">Virtual Assistant Analytics</h1>
         <p class="masthead__subtitle">
-          A read-only view of the commands this assistant has handled,
-          measured by the same analytics service the assistant uses when it
-          answers "show my analytics".
+          A read-only view of the commands this assistant has handled, measured
+          by the same service it uses when you ask it for analytics in person.
         </p>
       </div>
-      <form class="rangefilter" method="get" action="/">
-        <label class="rangefilter__field">
+
+      <form class="rangefilter" method="get" action="/"
+            aria-label="Filter by reporting range">
+        <label class="rangefilter__field" for="range-start">
           <span class="rangefilter__label">From</span>
-          <input type="date" name="start" value="{{ range_start }}"
-                 aria-label="Start date">
+          <input type="date" id="range-start" name="start"
+                 value="{{ range_start }}">
         </label>
-        <label class="rangefilter__field">
+        <label class="rangefilter__field" for="range-end">
           <span class="rangefilter__label">To</span>
-          <input type="date" name="end" value="{{ range_end }}"
-                 aria-label="End date">
+          <input type="date" id="range-end" name="end" value="{{ range_end }}">
         </label>
-        <button class="rangefilter__submit" type="submit">Apply</button>
+        <button class="rangefilter__submit" type="submit">Apply range</button>
         <a class="rangefilter__reset" href="/">All time</a>
       </form>
     </header>
 
     {% if error %}
+    {# role="alert" so the message is announced when it appears. #}
     <div class="alert" role="alert">
-      <strong>That range could not be used.</strong>
+      <span class="alert__title">That range could not be used.</span>
       <span>{{ error }}</span>
       <span class="alert__note">
-        Showing all available data instead.
+        Every figure below is for all available data instead.
       </span>
     </div>
     {% endif %}
 
-    <p class="rangecaption">
-      Reporting <strong>{{ range_label }}</strong>
-    </p>
+    {# The chosen range, stated in words as well as in the inputs. #}
+    <p class="rangecaption">Reporting <strong>{{ range_label }}</strong></p>
 
-    {% block content %}{% endblock %}
+    <main id="main">
+      {% block content %}{% endblock %}
+    </main>
 
     <footer class="colophon">
       <p>
-        Every figure on this page is read from the assistant's SQLite history.
-        The dashboard opens that database <strong>read-only</strong> and cannot
-        modify it.
+        Every figure here is read from the assistant's SQLite history. The
+        dashboard opens that database <strong>read-only</strong>, so it cannot
+        modify your commands or your notes.
       </p>
       <p class="colophon__meta">
-        Same numbers as the <code>/api/dashboard</code> endpoint.
+        The same numbers are available as JSON from
+        <code>/api/dashboard</code>.
       </p>
     </footer>
   </div>

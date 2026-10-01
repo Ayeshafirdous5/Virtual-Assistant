@@ -70,16 +70,25 @@ and the dashboard shows a user's own command history.
 | Section | Contents |
 | --- | --- |
 | Header | Reporting range, plus a from/to date filter |
-| KPI cards | Total interactions, unique tools, most used tool, match rate, total notes |
-| Top tools | Up to five tools with counts and share of the range |
+| Overview | Total interactions, unique tools, most used tool, match rate, total notes |
+| Usage | Top tools with counts and share, plus activity peaks |
 | Activity | Daily and weekly interaction trends, drawn as SVG bar charts |
-| Peaks | Busiest day, busiest week, active days, unmatched commands, first and most recent command |
 | Notes | Total, average and longest length, days with notes, first and latest timestamps |
+
+The page is arranged as four reading tiers — overview, usage, activity,
+notes — separated by weight and a quiet section label rather than by
+decoration. It responds at every width from a 390px phone to a wide desktop,
+and the charts are plain SVG with no charting library behind them.
+
+Every figure is also present as text, so the page stays complete and
+readable with JavaScript disabled: each chart carries a fallback table with
+the same numbers.
 
 A metric that has no value — a match rate with nothing measured, an average
 over no notes — is shown as a dash rather than a zero, because "not measured"
-and "measured as zero" are different facts. With no data at all the page shows
-an empty state explaining what to do next.
+and "measured as zero" are different facts. Three different empty conditions
+(nothing recorded, nothing in the chosen range, no notes) each say what to do
+next instead of showing zeroes.
 
 ### API
 

@@ -259,6 +259,85 @@ class TestEmptyDatabase:
 
 
 # ----------------------------------------------------------------------
+# Sprint 2: three distinct empty states
+# ----------------------------------------------------------------------
+class TestDistinctEmptyStates:
+    """Three conditions, three different messages.
+
+    They are genuinely different: "nothing has ever been recorded" needs
+    different advice from "this range is empty" and from "no notes yet".
+    """
+
+    def _fixture_only_unmatched(self, tmp_path: Path) -> Path:
+        """Commands were recorded, but none of them matched a tool."""
+        path = tmp_path / "unmatched.db"
+        db = Database(path)
+        db.initialize()
+        for _ in range(3):
+            db.execute(
+                "INSERT INTO interactions (occurred_at, tool_name) VALUES (?,?)",
+                ("2026-09-21 09:00:00", "none"),
+            )
+        db.close()
+        return path
+
+    def test_empty_database_says_use_the_assistant(self, empty: Path):
+        client = TestClient(create_app(empty))
+        text = client.get("/").text
+        assert NO_ACTIVITY_HEADING in text
+        assert "Use the assistant a few times" in text
+
+    def test_empty_database_has_no_charts(self, empty: Path):
+        """No SVG to render and no zeroed bars to misread as real activity."""
+        text = TestClient(create_app(empty)).get("/").text
+        assert 'data-chart="bar"' not in text
+
+    def test_only_unmatched_gets_its_own_message(self, tmp_path: Path):
+        client = TestClient(create_app(self._fixture_only_unmatched(tmp_path)))
+        text = client.get("/").text
+        assert "No tool has handled a command" in text
+        assert "matched a capability the assistant knows" in text
+
+    def test_an_empty_range_gets_its_own_message(self, populated: Path):
+        """Data exists, but not inside the requested window."""
+        client = TestClient(create_app(populated))
+        text = client.get("/?start=2030-01-01&end=2030-01-31").text
+        assert "No commands in this range" in text
+        assert "Widen the reporting range" in text
+
+    def test_no_notes_gets_its_own_message(self, tmp_path: Path):
+        """Activity but no notes is a different situation again."""
+        path = tmp_path / "nonotes.db"
+        db = Database(path)
+        db.initialize()
+        db.execute(
+            "INSERT INTO interactions (occurred_at, tool_name) VALUES (?,?)",
+            ("2026-09-21 09:00:00", "weather"),
+        )
+        db.close()
+        text = TestClient(create_app(path)).get("/").text
+        assert "No notes saved yet" in text
+        assert "note buy milk" in text
+
+    def test_an_empty_range_with_no_activity_charts_says_so(
+        self, populated: Path
+    ):
+        text = TestClient(create_app(populated)).get(
+            "/?start=2030-01-01&end=2030-01-31"
+        ).text
+        assert "Nothing to chart in this range" in text
+
+    def test_the_three_messages_are_all_distinct(self, empty: Path):
+        """Guards against the three collapsing into one generic message."""
+        populated_text = TestClient(create_app(empty)).get("/").text
+        assert NO_ACTIVITY_HEADING in populated_text
+        # The other two appear only in states this fixture cannot reach, so
+        # their presence here would mean one message was reused.
+        assert "No commands in this range" not in populated_text
+        assert "No notes saved yet" not in populated_text
+
+
+# ----------------------------------------------------------------------
 # The JSON API
 # ----------------------------------------------------------------------
 class TestJsonApi:
@@ -339,12 +418,30 @@ class TestHtmlPage:
             "Total notes",
             "Top tools",
             "Activity",
-            "Peaks",
+            # Sprint 2 renamed this from a bare "Peaks" heading to
+            # "Activity peaks", which sits under the "Usage" eyebrow.
+            "Activity peaks",
             "Notes",
         ],
     )
     def test_every_section_renders(self, client, section):
         assert section in client.get("/").text
+
+    @pytest.mark.parametrize(
+        "tier",
+        ["Overview", "Usage", "Activity", "Notes"],
+    )
+    def test_the_reading_tiers_are_labelled(self, client, tier):
+        """Sprint 2: each tier carries a quiet eyebrow naming it."""
+        text = client.get("/").text
+        assert f'class="section__eyebrow"' in text
+        assert tier in text
+
+    def test_the_kpi_cards_carry_a_metric_accent_rule(self, client):
+        """The one mark that separates the primary tier from the panels."""
+        text = client.get("/").text
+        assert ".kpi::before" in client.get("/static/style.css").text
+        assert text.count('class="card kpi"') == 5
 
     def test_it_shows_the_measured_numbers(self, client):
         text = client.get("/").text
@@ -390,6 +487,144 @@ class TestHtmlPage:
     def test_it_never_prints_a_note_body(self, client):
         """Lengths only. A note is private text."""
         assert "buy milk" not in client.get("/").text
+
+
+# ----------------------------------------------------------------------
+# Accessibility contract
+# ----------------------------------------------------------------------
+class TestAccessibility:
+    """Markup guarantees that a screenshot cannot check.
+
+    These are the things a visual pass cannot see: a missing label, an
+    unlabelled control, a heading level skipped. Asserted here so a later
+    template edit cannot quietly undo them.
+    """
+
+    def test_headings_run_h1_then_h2_then_h3_without_skipping(self, client):
+        import re
+
+        levels = [int(m) for m in re.findall(
+            r"<h([1-6])\b", client.get("/").text
+        )]
+        assert levels[0] == 1, "the page must open with a single h1"
+        for previous, current in zip(levels, levels[1:]):
+            assert current - previous <= 1, (
+                f"heading level jumps from h{previous} to h{current}"
+            )
+
+    def test_there_is_exactly_one_h1(self, client):
+        assert client.get("/").text.count("<h1") == 1
+
+    def test_every_input_has_a_real_label(self, client):
+        """A <label for> beats a duplicated aria-label that can disagree."""
+        text = client.get("/").text
+        assert 'for="range-start"' in text
+        assert 'for="range-end"' in text
+        assert 'id="range-start"' in text
+        assert 'id="range-end"' in text
+
+    def test_the_form_has_an_accessible_name(self, client):
+        assert 'aria-label="Filter by reporting range"' in client.get("/").text
+
+    def test_there_is_a_skip_link_to_the_main_landmark(self, client):
+        text = client.get("/").text
+        assert 'class="sr-only" href="#main"' in text
+        assert 'id="main"' in text
+
+    def test_the_meters_are_not_colour_only(self, client):
+        """Each bar carries its figures as text, so greyscale still works."""
+        text = client.get("/").text
+        assert 'class="meter__count"' in text
+        assert 'class="meter__share"' in text
+        assert 'class="meter__fill"' in text
+
+    def test_each_section_is_labelled_by_its_heading(self, client):
+        text = client.get("/").text
+        for heading in ("kpis-heading", "usage-heading", "activity-heading",
+                        "notes-heading"):
+            assert f'aria-labelledby="{heading}"' in text
+
+    def test_the_fallback_tables_have_captions(self, client):
+        """A <caption> names a table for a screen reader."""
+        text = client.get("/").text
+        assert 'class="sr-only">Daily interactions</caption>' in text
+        assert 'class="sr-only">Weekly interactions</caption>' in text
+
+    def test_noscript_tables_use_scope_on_headers(self, client):
+        text = client.get("/").text
+        assert '<th scope="col">' in text
+        assert '<th scope="row">' in text
+
+    def test_focus_is_visible_in_the_stylesheet(self, client):
+        css = client.get("/static/style.css").text
+        assert ":focus-visible" in css
+        assert "outline: none" not in css.split(":focus-visible")[1][:80], (
+            "focus-visible must not remove the ring without replacing it"
+        )
+
+    def test_secondary_text_meets_contrast_on_white(self):
+        """The small grey text is the most likely place to fail contrast.
+
+        Checked arithmetically rather than by eye, because 12px grey is
+        exactly where a palette quietly drops below the threshold.
+        """
+
+        def relative_luminance(hex_colour: str) -> float:
+            channels = [
+                int(hex_colour[i:i + 2], 16) / 255
+                for i in (1, 3, 5)
+            ]
+            adjusted = [
+                c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+                for c in channels
+            ]
+            return (
+                0.2126 * adjusted[0]
+                + 0.7152 * adjusted[1]
+                + 0.0722 * adjusted[2]
+            )
+
+        def contrast(fg: str, bg: str = "#ffffff") -> float:
+            a, b = (
+                relative_luminance(fg),
+                relative_luminance(bg),
+            )
+            lighter, darker = max(a, b), min(a, b)
+            return (lighter + 0.05) / (darker + 0.05)
+
+        # The three text tokens from :root, each at its documented role.
+        for token, minimum in (
+            ("#10151c", 7.0),   # --text, body copy
+            ("#444f5e", 4.5),   # --text-2, secondary copy
+            ("#5c6875", 4.5),   # --text-3, small labels
+        ):
+            ratio = contrast(token)
+            assert ratio >= minimum, (
+                f"{token} is {ratio:.2f}:1 on white, below {minimum}:1"
+            )
+
+    def test_the_accent_meets_contrast_as_text(self):
+        """--accent-ink is used for links, so it must be readable as text."""
+        def luminance(colour: str) -> float:
+            ch = [int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            adj = [
+                c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+                for c in ch
+            ]
+            return 0.2126 * adj[0] + 0.7152 * adj[1] + 0.0722 * adj[2]
+
+        a, b = luminance("#1a4bbd"), luminance("#ffffff")
+        ratio = (max(a, b) + 0.05) / (min(a, b) + 0.05)
+        assert ratio >= 4.5, f"link colour is only {ratio:.2f}:1"
+
+    def test_reduced_motion_is_respected(self, client):
+        assert "prefers-reduced-motion" in client.get("/static/style.css").text
+
+    def test_the_chart_carries_a_readable_summary_when_drawn(self, client):
+        """The script adds an aria-label; the markup must give it a caption."""
+        text = client.get("/").text
+        assert 'class="chart__caption">Daily interactions' in text
+        assert 'class="chart__caption">Weekly interactions' in text
 
 
 # ----------------------------------------------------------------------
