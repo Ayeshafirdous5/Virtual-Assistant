@@ -1,0 +1,278 @@
+{#
+  The dashboard page.
+
+  Two rules govern everything below:
+
+  1. Never print a number the service did not measure. Undefined metrics
+     arrive as ``None`` and render through the ``figure`` macro as a dash, so
+     an empty database shows absence rather than a fabricated zero.
+  2. The page is complete without JavaScript. Charts are progressive
+     enhancement; every figure is already in the HTML as text.
+#}{% extends "base.html" %}
+
+{% macro figure(value, suffix="") %}
+  {%- if value is none -%}
+    <span class="figure figure--absent" title="Not available: nothing to measure">&mdash;</span>
+  {%- else -%}
+    <span class="figure">{{ value }}{{ suffix }}</span>
+  {%- endif -%}
+{% endmacro %}
+
+{% macro plural_time(count) %}
+  {%- if count is none -%}
+    <span class="figure figure--absent">&mdash;</span>
+  {%- else -%}
+    <span class="figure">{{ count }} time{% if count != 1 %}s{% endif %}</span>
+  {%- endif -%}
+{% endmacro %}
+
+{% block content %}
+
+{% if is_empty %}
+  {# Honest empty state. No cards and no zeroed charts: there is nothing yet. #}
+  <section class="empty">
+    <h2 class="empty__title">{{ empty_heading }}</h2>
+    <p class="empty__body">{{ empty_body }}</p>
+  </section>
+{% else %}
+
+  {# -------------------------------------------------------------- #}
+  {# KPI cards                                                     #}
+  {# -------------------------------------------------------------- #}
+  <section class="kpis" aria-label="Headline figures">
+    <article class="card kpi">
+      <h2 class="kpi__label">Total interactions</h2>
+      <p class="kpi__value">{{ figure(kpis.total_interactions) }}</p>
+      <p class="kpi__hint">Commands recorded in this range, matched or not.</p>
+    </article>
+
+    <article class="card kpi">
+      <h2 class="kpi__label">Unique tools</h2>
+      <p class="kpi__value">{{ figure(kpis.unique_tools) }}</p>
+      <p class="kpi__hint">Distinct tools that handled a command.</p>
+    </article>
+
+    <article class="card kpi">
+      <h2 class="kpi__label">Most used tool</h2>
+      <p class="kpi__value kpi__value--word">
+        {%- if kpis.most_used_tool -%}
+          {{ kpis.most_used_tool }}
+        {%- else -%}
+          <span class="figure figure--absent">&mdash;</span>
+        {%- endif -%}
+      </p>
+      <p class="kpi__hint">
+        {% if kpis.most_used_tool %}
+          {{ plural_time(kpis.most_used_count) }}
+        {% else %}
+          Nothing matched a tool yet.
+        {% endif %}
+      </p>
+    </article>
+
+    <article class="card kpi">
+      <h2 class="kpi__label">Match rate</h2>
+      <p class="kpi__value">
+        {{ figure(kpis.matched_rate, "%" if kpis.matched_rate is not none else "") }}
+      </p>
+      <p class="kpi__hint">Share of commands a tool actually handled.</p>
+    </article>
+
+    <article class="card kpi">
+      <h2 class="kpi__label">Total notes</h2>
+      <p class="kpi__value">{{ figure(notes.total) }}</p>
+      <p class="kpi__hint">Stored separately, so this covers all time.</p>
+    </article>
+  </section>
+
+  {# -------------------------------------------------------------- #}
+  {# Top tools and peaks                                            #}
+  {# -------------------------------------------------------------- #}
+  <div class="split">
+    <section class="card panel" aria-labelledby="toptools-heading">
+      <h2 class="panel__title" id="toptools-heading">Top tools</h2>
+      {% if top_tools %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Tool</th>
+              <th scope="col" class="numeric">Count</th>
+              <th scope="col" class="numeric">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for tool in top_tools %}
+            <tr>
+              <th scope="row">{{ tool.tool_name }}</th>
+              <td class="numeric">{{ tool.count }}</td>
+              <td class="numeric">
+                {{ figure(tool.percentage, "%" if tool.percentage is not none else "") }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="panel__note">
+          Share is of all commands in the range, including those that matched
+          no tool, so these add up to less than 100% when some went unresolved.
+        </p>
+      {% else %}
+        <p class="panel__empty">No tool has handled a command in this range.</p>
+      {% endif %}
+    </section>
+
+    <section class="card panel" aria-labelledby="peaks-heading">
+      <h2 class="panel__title" id="peaks-heading">Peaks</h2>
+      <dl class="peaks">
+        <div class="peaks__row">
+          <dt>Busiest day</dt>
+          <dd>
+            {% if busiest_day %}
+              {{ busiest_day.period }}
+              <span class="peaks__count">{{ busiest_day.count }}</span>
+            {% else %}
+              <span class="figure figure--absent">&mdash;</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Busiest week</dt>
+          <dd>
+            {% if busiest_week %}
+              {{ busiest_week.period }}
+              <span class="peaks__count">{{ busiest_week.count }}</span>
+            {% else %}
+              <span class="figure figure--absent">&mdash;</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Active days</dt><dd>{{ figure(summary.active_days) }}</dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Unmatched commands</dt><dd>{{ figure(summary.unmatched_total) }}</dd>
+        </div>
+        <div class="peaks__row">
+          <dt>First recorded</dt>
+          <dd>
+            {% if summary.first_interaction %}
+              {{ summary.first_interaction[:10] }}
+            {% else %}
+              <span class="figure figure--absent">&mdash;</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Most recent</dt>
+          <dd>
+            {% if summary.last_interaction %}
+              {{ summary.last_interaction[:10] }}
+            {% else %}
+              <span class="figure figure--absent">&mdash;</span>
+            {% endif %}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  </div>
+
+  {# -------------------------------------------------------------- #}
+  {# Activity charts. Data is embedded for the client script.        #}
+  {# -------------------------------------------------------------- #}
+  <section class="card panel" aria-labelledby="activity-heading">
+    <h2 class="panel__title" id="activity-heading">Activity</h2>
+    {% if daily or weekly %}
+      <div class="charts">
+        <figure class="chart">
+          <figcaption class="chart__caption">Daily interactions</figcaption>
+          {# The fallback table lives in <noscript>, so the data stays
+             reachable whenever the chart cannot be drawn. #}
+          <div class="chart__canvas"
+               data-chart="bar"
+               data-labels='{{ daily | map(attribute="period") | list | tojson }}'
+               data-values='{{ daily | map(attribute="count") | list | tojson }}'>
+          </div>
+          <noscript>
+            <table class="table table--compact">
+              <thead><tr><th scope="col">Day</th><th scope="col" class="numeric">Count</th></tr></thead>
+              <tbody>
+                {% for row in daily %}
+                <tr><th scope="row">{{ row.period }}</th><td class="numeric">{{ row.count }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </noscript>
+        </figure>
+
+        <figure class="chart">
+          <figcaption class="chart__caption">Weekly interactions</figcaption>
+          <div class="chart__canvas"
+               data-chart="bar"
+               data-labels='{{ weekly | map(attribute="period") | list | tojson }}'
+               data-values='{{ weekly | map(attribute="count") | list | tojson }}'>
+          </div>
+          <noscript>
+            <table class="table table--compact">
+              <thead><tr><th scope="col">Week</th><th scope="col" class="numeric">Count</th></tr></thead>
+              <tbody>
+                {% for row in weekly %}
+                <tr><th scope="row">{{ row.period }}</th><td class="numeric">{{ row.count }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </noscript>
+        </figure>
+      </div>
+    {% else %}
+      <p class="panel__empty">No activity to chart in this range.</p>
+    {% endif %}
+  </section>
+
+  {# -------------------------------------------------------------- #}
+  {# Notes                                                          #}
+  {# -------------------------------------------------------------- #}
+  <section class="card panel" aria-labelledby="notes-heading">
+    <h2 class="panel__title" id="notes-heading">Notes</h2>
+    {% if has_notes %}
+      <dl class="peaks peaks--wide">
+        <div class="peaks__row">
+          <dt>Stored</dt><dd>{{ figure(notes.total) }}</dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Average length</dt>
+          <dd>
+            {{ figure(notes.average_length, " chars" if notes.average_length is not none else "") }}
+          </dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Longest</dt>
+          <dd>
+            {{ figure(notes.longest_length, " chars" if notes.longest_length is not none else "") }}
+          </dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Days with notes</dt><dd>{{ figure(notes.days_with_notes) }}</dd>
+        </div>
+        <div class="peaks__row">
+          <dt>First note</dt>
+          <dd>{{ notes.first_created[:10] if notes.first_created else "—" }}</dd>
+        </div>
+        <div class="peaks__row">
+          <dt>Latest note</dt>
+          <dd>{{ notes.last_created[:10] if notes.last_created else "—" }}</dd>
+        </div>
+      </dl>
+      <p class="panel__note">
+        The notes table has no status column, so "stored" is the only count
+        that can be reported. There is no active, done or archived figure.
+      </p>
+    {% else %}
+      <p class="panel__empty">
+        No notes stored yet. Add one with the assistant and reload.
+      </p>
+    {% endif %}
+  </section>
+
+{% endif %}
+{% endblock %}
+

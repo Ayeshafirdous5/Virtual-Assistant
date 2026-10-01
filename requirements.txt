@@ -35,6 +35,20 @@ randfacts==0.22.0
 # Used to keep API keys out of the source code.
 python-dotenv==1.2.3
 
+# --- Analytics dashboard (optional) -------------------------------------
+# Only needed to run the read-only web dashboard:
+#     python -m assistant.dashboard.app
+#
+# The assistant itself and its test suite do not import any of these, so they
+# can be omitted if you never open the dashboard. Jinja2 ships with FastAPI's
+# "standard" extra, so it is listed to pin the version this project was built
+# and tested against rather than to introduce a new dependency.
+fastapi==0.142.2
+uvicorn==0.54.0
+jinja2==3.1.6
+
+
 # --- Development / testing --------------------------------------------------
 # Only needed to run the test suite:  python -m pytest
 pytest==9.1.1
+

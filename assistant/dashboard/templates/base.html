@@ -1,0 +1,77 @@
+{#
+  Base layout for the analytics dashboard.
+
+  Deliberately a hand-written HTML skeleton with no template engine features
+  beyond inheritance: the page is a static shell, and the numbers all arrive
+  already measured in the context. Nothing here computes a statistic.
+
+  The "no JavaScript required" note matters. Every figure is rendered into the
+  HTML by the server, so the page is complete and readable with scripting
+  disabled. dashboard.js only adds the charts on top; it never supplies a
+  number that is missing without it.
+#}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Virtual Assistant Analytics{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+  <link rel="icon" href="data:,">
+</head>
+<body>
+  <div class="page">
+    <header class="masthead">
+      <div class="masthead__text">
+        <h1 class="masthead__title">Virtual Assistant Analytics</h1>
+        <p class="masthead__subtitle">
+          A read-only view of the commands this assistant has handled,
+          measured by the same analytics service the assistant uses when it
+          answers "show my analytics".
+        </p>
+      </div>
+      <form class="rangefilter" method="get" action="/">
+        <label class="rangefilter__field">
+          <span class="rangefilter__label">From</span>
+          <input type="date" name="start" value="{{ range_start }}"
+                 aria-label="Start date">
+        </label>
+        <label class="rangefilter__field">
+          <span class="rangefilter__label">To</span>
+          <input type="date" name="end" value="{{ range_end }}"
+                 aria-label="End date">
+        </label>
+        <button class="rangefilter__submit" type="submit">Apply</button>
+        <a class="rangefilter__reset" href="/">All time</a>
+      </form>
+    </header>
+
+    {% if error %}
+    <div class="alert" role="alert">
+      <strong>That range could not be used.</strong>
+      <span>{{ error }}</span>
+      <span class="alert__note">
+        Showing all available data instead.
+      </span>
+    </div>
+    {% endif %}
+
+    <p class="rangecaption">
+      Reporting <strong>{{ range_label }}</strong>
+    </p>
+
+    {% block content %}{% endblock %}
+
+    <footer class="colophon">
+      <p>
+        Every figure on this page is read from the assistant's SQLite history.
+        The dashboard opens that database <strong>read-only</strong> and cannot
+        modify it.
+      </p>
+      <p class="colophon__meta">
+        Same numbers as the <code>/api/dashboard</code> endpoint.
+      </p>
+    </footer>
+  </div>
+  <script src="{{ url_for('static', path='/dashboard.js') }}"></script>
+</body>
+</html>

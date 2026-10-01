@@ -1,0 +1,418 @@
+/*
+  Analytics dashboard styles.
+
+  Hand-written CSS, no framework and no build step. Two goals:
+
+  * Readable first. A dashboard someone actually has to read should not need
+    a stylesheet to explain what it is saying.
+  * Honest about absence. The dash rendered for an unavailable metric is
+    styled as clearly "not a number" rather than being greyed into looking
+    like a zero.
+
+  Layout is a single column of cards on small screens that widens into a
+  grid, so the page works on a phone and does not stretch uncomfortably on a
+  desktop.
+*/
+
+/* ------------------------------------------------------------------ */
+/* Design tokens                                                       */
+/* ------------------------------------------------------------------ */
+:root {
+  --ink:         #12161c;
+  --ink-soft:    #4a5568;
+  --ink-faint:   #7b8794;
+  --line:        #e2e6ec;
+  --line-strong: #cbd2dc;
+  --surface:     #ffffff;
+  --surface-sunk:#f6f8fa;
+  --page:        #f2f4f7;
+
+  --accent:      #2f6df6;
+  --accent-soft: #e8f0fe;
+  --accent-ink:  #1b4bc4;
+
+  --warn:        #9a6400;
+
+  /* Type scale. */
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* A 4px spacing scale. Every gap is a multiple, which is most of what
+     makes a layout look deliberate rather than accidental. */
+  --s1: 4px;  --s2: 8px;  --s3: 12px;
+  --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow: 0 1px 2px rgba(18,22,28,.05), 0 1px 3px rgba(18,22,28,.04);
+  --max: 1120px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base                                                                */
+/* ------------------------------------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--page);
+  /* Tabular figures keep columns of numbers aligned. */
+  font-variant-numeric: tabular-nums;
+}
+
+h1, h2, h3, p, dl, dd, figure { margin: 0; }
+a { color: var(--accent-ink); }
+
+code {
+  font-family: var(--font-mono);
+  font-size: .9em;
+  background: var(--surface-sunk);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+}
+
+.page {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: var(--s6) var(--s5) var(--s7);
+}
+
+/* ------------------------------------------------------------------ */
+/* Masthead and range filter                                           */
+/* ------------------------------------------------------------------ */
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s4);
+  margin-bottom: var(--s5);
+}
+
+.masthead__title {
+  font-size: 26px;
+  font-weight: 640;
+  letter-spacing: -.02em;
+}
+
+.masthead__subtitle {
+  margin-top: var(--s2);
+  max-width: 60ch;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+
+.rangefilter {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s3);
+  box-shadow: var(--shadow);
+}
+
+.rangefilter__field { display: flex; flex-direction: column; gap: var(--s1); }
+
+.rangefilter__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--ink-faint);
+}
+
+.rangefilter input[type="date"] {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.rangefilter input[type="date"]:focus-visible,
+.rangefilter__submit:focus-visible,
+.rangefilter__reset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.rangefilter__submit {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.rangefilter__submit:hover { background: var(--accent-ink); }
+
+.rangefilter__reset {
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  padding: 7px 4px;
+  border-bottom: 1px solid transparent;
+}
+
+.rangefilter__reset:hover {
+  color: var(--accent-ink);
+  border-bottom-color: currentColor;
+}
+
+.rangecaption { margin-bottom: var(--s4); font-size: 13px; color: var(--ink-soft); }
+.rangecaption strong { color: var(--ink); font-weight: 600; }
+
+/* ------------------------------------------------------------------ */
+/* Alert: a bad date range, reported in the page                        */
+/* ------------------------------------------------------------------ */
+.alert {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  align-items: baseline;
+  margin-bottom: var(--s4);
+  padding: var(--s3) var(--s4);
+  border: 1px solid #f0d9a8;
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: #fdf8ec;
+  color: #6b4a00;
+  font-size: 13.5px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Cards                                                               */
+/* ------------------------------------------------------------------ */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+}
+
+.kpi { padding: var(--s4); }
+
+.kpi__label {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--ink-faint);
+}
+
+.kpi__value {
+  margin-top: var(--s2);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  line-height: 1.1;
+}
+
+/* A tool name can be long; let it shrink rather than overflow. */
+.kpi__value--word { font-size: 22px; word-break: break-word; }
+
+/* A fixed min-height keeps the five cards on one baseline grid. */
+.kpi__hint {
+  margin-top: var(--s1);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  min-height: 2.4em;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: var(--s3);
+  margin-bottom: var(--s3);
+}
+
+@media (max-width: 860px) {
+  .split { grid-template-columns: 1fr; }
+  .page { padding: var(--s5) var(--s4) var(--s6); }
+  .masthead { align-items: flex-start; }
+}
+
+.panel { padding: var(--s4); margin-bottom: var(--s3); }
+.panel__title { font-size: 15px; font-weight: 640; margin-bottom: var(--s3); }
+
+.panel__note,
+.panel__empty {
+  margin-top: var(--s3);
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  max-width: 68ch;
+}
+
+/* ------------------------------------------------------------------ */
+/* Figures: measured vs absent                                         */
+/* ------------------------------------------------------------------ */
+.figure { font-variant-numeric: tabular-nums; }
+
+/*
+  An unavailable metric. Deliberately styled as "not a number" -- dashed
+  underline and muted ink -- so a dash can never be misread as a measured
+  zero. This is the visual counterpart of routes._available().
+*/
+.figure--absent {
+  color: var(--ink-faint);
+  border-bottom: 1px dashed var(--line-strong);
+  padding-bottom: 1px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tables                                                              */
+/* ------------------------------------------------------------------ */
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--s2);
+  border-bottom: 1px solid var(--line);
+}
+
+.table thead th {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--ink-faint);
+  border-bottom-color: var(--line-strong);
+}
+
+.table tbody th { font-weight: 500; }
+.table tbody tr:last-child th,
+.table tbody tr:last-child td { border-bottom: none; }
+.table tbody tr:hover { background: var(--surface-sunk); }
+.table .numeric { text-align: right; }
+.table--compact { font-size: 13px; margin-top: var(--s2); }
+
+/* ------------------------------------------------------------------ */
+/* Peaks list                                                          */
+/* ------------------------------------------------------------------ */
+.peaks { display: flex; flex-direction: column; }
+
+.peaks__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.peaks__row:last-child { border-bottom: none; }
+.peaks__row dt { color: var(--ink-soft); font-size: 13.5px; }
+
+.peaks__row dd {
+  text-align: right;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.peaks__count {
+  display: inline-block;
+  margin-left: var(--s2);
+  min-width: 28px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
+/* Empty state                                                         */
+/* ------------------------------------------------------------------ */
+.empty {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s7) var(--s5);
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.empty__title { font-size: 18px; font-weight: 640; }
+
+.empty__body {
+  margin-top: var(--s2);
+  color: var(--ink-soft);
+  max-width: 52ch;
+  margin-inline: auto;
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Charts                                                              */
+/* ------------------------------------------------------------------ */
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--s5);
+}
+
+.chart { display: flex; flex-direction: column; min-width: 0; }
+
+.chart__caption {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: var(--s3);
+}
+
+.chart__canvas { width: 100%; min-height: 170px; }
+.chart__canvas svg { display: block; width: 100%; height: auto; }
+
+/* Axis and gridlines are quiet on purpose: the bars are the content. */
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .axis-label { fill: var(--ink-faint); font-size: 10px; font-family: var(--font); }
+.chart .bar { fill: var(--accent); rx: 2; }
+.chart .bar:hover { fill: var(--accent-ink); }
+.chart .value-label { fill: var(--ink-soft); font-size: 10px; font-weight: 600; }
+.chart .empty-note { fill: var(--ink-faint); font-size: 12px; font-family: var(--font); }
+
+/* ------------------------------------------------------------------ */
+/* Colophon                                                            */
+/* ------------------------------------------------------------------ */
+.colophon {
+  margin-top: var(--s6);
+  padding-top: var(--s4);
+  border-top: 1px solid var(--line);
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  max-width: 72ch;
+}
+
+.colophon__meta { margin-top: var(--s1); }
+
+/* Respect a reduced-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+
