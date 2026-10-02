@@ -52,3 +52,15 @@ jinja2==3.1.6
 # Only needed to run the test suite:  python -m pytest
 pytest==9.1.1
 
+# HTTP transport for fastapi.testclient, used by the dashboard tests.
+# NOT optional: httpx2 is an extra of Starlette (extra == "full"), so
+# installing fastapi above installs neither httpx2 nor httpx, and the test
+# client then fails at import with:
+#   RuntimeError: The starlette.testclient module requires the httpx2
+#   package to be installed.
+# Written as a floor rather than an exact pin because that is the range
+# Starlette itself declares (httpx2>=2.0.0). Pinning a specific release
+# that was never resolved here would be a guess; replace with == once the
+# version in use is confirmed.
+httpx2>=2.0.0
+

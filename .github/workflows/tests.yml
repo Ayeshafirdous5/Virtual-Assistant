@@ -51,9 +51,26 @@ jobs:
         # needs portaudio headers and would make the pipeline fail for no
         # benefit, so the workflow installs the true minimum and the suite
         # proves it does not need the rest.
+        #
+        # httpx2 is not optional here. It is an *extra* of Starlette
+        # (extra == "full"), so a plain `pip install fastapi` installs
+        # neither httpx2 nor httpx. Starlette's TestClient needs an HTTP
+        # transport and, finding neither, raises at import:
+        #   RuntimeError: The starlette.testclient module requires the
+        #   httpx2 package to be installed.
+        # That is what the dashboard tests import. Installing it explicitly
+        # is also the forward-looking choice: Starlette prefers httpx2 and
+        # deprecation-warns when it falls back to httpx.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest requests python-dotenv fastapi uvicorn jinja2
+          python -m pip install \
+            pytest \
+            requests \
+            python-dotenv \
+            fastapi \
+            uvicorn \
+            jinja2 \
+            httpx2
 
       - name: Syntax check
         # compileall is the cheapest way to catch a file that does not even

@@ -37,7 +37,13 @@ dependencies = []
 # The pins live there; duplicating the versions is exactly what this file
 # avoids, so this group exists to name the extra rather than to constrain it.
 dashboard = ["fastapi", "uvicorn", "jinja2"]
-dev = ["pytest"]
+# httpx2 is required to run the tests at all, not merely to be tidy. It is an
+# optional extra of Starlette, so installing fastapi alone provides neither
+# httpx2 nor httpx, and `fastapi.testclient` then raises at import:
+#   RuntimeError: The starlette.testclient module requires the httpx2
+#   package to be installed.
+# The dashboard tests import that module, so it belongs in the dev group.
+dev = ["pytest", "httpx2"]
 
 [project.scripts]
 virtual-assistant = "assistant.app:main"
