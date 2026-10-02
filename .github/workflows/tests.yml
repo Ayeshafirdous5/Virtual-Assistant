@@ -1,0 +1,90 @@
+# -----------------------------------------------------------------------------
+# Test and syntax-check on every push and pull request.
+#
+# Scope, deliberately: this workflow *verifies*. It never deploys, never
+# starts the dashboard as a service, and never touches a secret. A test
+# pipeline that can reach a production system is a test pipeline that can
+# break one.
+# -----------------------------------------------------------------------------
+name: Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  # Lets a maintainer re-run a failed run from the UI without a new commit.
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref: a busy branch should not queue five
+# identical suites.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # A single, fast, reliable job. The suite needs no services, no database
+    # server and no browser, so a matrix would add minutes and flakiness
+    # without adding confidence.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches requires-python in pyproject.toml.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install the test dependencies
+        # Only what the suite actually imports. The voice and browser
+        # libraries are deliberately NOT installed: every one of them is
+        # imported lazily inside a function, and the tests reference them
+        # only as strings in isolation checks. Installing pyaudio on Linux
+        # needs portaudio headers and would make the pipeline fail for no
+        # benefit, so the workflow installs the true minimum and the suite
+        # proves it does not need the rest.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest requests python-dotenv fastapi uvicorn jinja2
+
+      - name: Syntax check
+        # compileall is the cheapest way to catch a file that does not even
+        # parse. It runs before the suite so a syntax error reports in
+        # seconds rather than as a collection failure buried in the output.
+        run: python -m compileall -q assistant tests main.py
+
+      - name: Run the test suite
+        run: python -m pytest -q
+
+      - name: Confirm the suite did not write to the repository
+        # The test contract is that the real database is never touched. A
+        # dirty tree after a run would mean that contract broke silently, so
+        # it is checked rather than trusted.
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::The test run modified tracked files:"
+            git status --porcelain
+            exit 1
+          fi
+          echo "Test run left the working tree clean."
+
+      - name: Confirm no secrets were committed
+        # Cheap guard against a .env or database being added in a hurry. The
+        # real values live in a local .env that is never present in CI, so
+        # this only fires if someone force-added a secret file.
+        run: |
+          for path in .env data logs .idea; do
+            if git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+              echo "::error::$path is tracked but should be git-ignored"
+              exit 1
+            fi
+          done
+          echo "No ignored paths are tracked."

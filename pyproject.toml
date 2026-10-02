@@ -1,0 +1,60 @@
+# -----------------------------------------------------------------------------
+# Project metadata and tooling configuration.
+#
+# This file deliberately does NOT duplicate the dependency list. Authoritative
+# pins live in requirements.txt and CI installs from there, because a project
+# pinned for Windows speech and browser automation is installed differently
+# from a library dependency: `pyaudio` and `pyttsx3` need a platform compiler,
+# so declaring them as hard install_requires would make `pip install .` fail
+# on Linux CI for no good reason.
+#
+# The metadata below is therefore for humans and tooling (editors, `pip show`,
+# packaging introspection) while requirements.txt stays the single source of
+# truth for versions.
+# -----------------------------------------------------------------------------
+
+[project]
+name = "virtual-assistant"
+version = "1.0.0"
+description = "A modular voice and text assistant with rule-based NLU, SQLite persistence, and a read-only analytics dashboard."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+keywords = ["assistant", "nlu", "speech", "sqlite", "analytics", "fastapi"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Database :: Database Engines/Servers",
+]
+
+# Intentionally empty. See the note above: requirements.txt owns the pins.
+# Listing them here as well would create two places to update and a standing
+# opportunity for them to disagree.
+dependencies = []
+
+[project.optional-dependencies]
+# Mirrors the "Analytics dashboard" block of requirements.txt, by name only.
+# The pins live there; duplicating the versions is exactly what this file
+# avoids, so this group exists to name the extra rather than to constrain it.
+dashboard = ["fastapi", "uvicorn", "jinja2"]
+dev = ["pytest"]
+
+[project.scripts]
+virtual-assistant = "assistant.app:main"
+
+[tool.pytest.ini_options]
+# Root-level tests live in tests/. Declared so `pytest` works from anywhere in
+# the tree, and so the dashboard's package data is discoverable.
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# The Starlette test client emits a deprecation notice from inside FastAPI.
+# It is a third-party warning, not a project defect, and hiding every warning
+# would also hide genuine ones -- so it is filtered by exact message. Note
+# the category: StarletteDeprecationWarning subclasses UserWarning, not
+# DeprecationWarning, so matching on DeprecationWarning would silently do
+# nothing.
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]

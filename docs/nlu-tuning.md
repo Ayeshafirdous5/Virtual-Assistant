@@ -1,5 +1,24 @@
 # NLU Tuning Record
 
+## Status
+
+This is a **historical record of one tuning pass**, dated 2026-09-27. The
+baseline figures below describe the suite as it stood on that date, not as it
+stands today — the project has grown substantially since, and several later
+sprints added both capabilities and tests.
+
+The numbers here are deliberately left as they were measured. Changing them
+would rewrite the evidence that justifies the shipped thresholds, which is
+the one thing this document exists to preserve.
+
+Every claim in it is asserted by a test in `tests/test_nlu_tuning.py`, so the
+thresholds and the residual errors can be re-verified at any time by running
+that file. The sections added after the tuning pass — the system-safety
+closures and the analytics work — are later entries in the same record, and
+are labelled with the phase they belong to.
+
+For the current state of the project, see the project README.
+
 ## Date
 
 2026-09-27
