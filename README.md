@@ -20,6 +20,7 @@ anywhere in the request path.
 - [Setup](#setup)
 - [Optional AI responses](#optional-ai-responses)
 - [Running it](#running-it)
+- [Demo / Example Commands](#demo--example-commands)
 - [The dashboard](#the-dashboard)
 - [Testing](#testing)
 - [Design decisions](#design-decisions)
@@ -212,12 +213,19 @@ copy .env.example .env         # Windows PowerShell
 # cp .env.example .env         # macOS / Linux
 ```
 
-`.env.example` lists the two variables:
+`.env.example` lists the two tool variables. Everything else in it is optional
+tuning with a working default, plus the commented-out AI block:
 
 | Variable | Needed for | Without it |
 | --- | --- | --- |
 | `NEWS_API_KEY` | the news tool | News is unavailable; nothing else changes |
 | `OPENWEATHER_API_KEY` | the weather tool | Weather is unavailable; nothing else changes |
+
+Those two are the only variables with no default. Every other key in
+`.env.example` — `NEWS_COUNTRY`, `NEWS_HEADLINE_COUNT`, `WEATHER_CITY`,
+`TTS_RATE`, `TTS_VOICE_NAME`, `REQUEST_TIMEOUT`, `LOG_LEVEL` — is commented
+out and already has a sensible default, so a `.env` containing only the two
+keys above is a complete and working setup.
 
 `.env` is git-ignored and must never be committed. `assistant/config.py` is the
 only module that reads the environment, and it never prints or logs a key.
@@ -309,6 +317,143 @@ show my analytics
 what do I use most
 exit
 ```
+
+---
+
+## Demo / Example Commands
+
+Every command below was checked against the running resolver rather than
+written from memory, so each one really does reach the tool named beside it.
+
+| Say this | Goes to | Notes |
+| --- | --- | --- |
+| `weather` | `weather` | Needs `OPENWEATHER_API_KEY` |
+| `what is the weather in london` | `weather` | City is extracted from the sentence |
+| `top headlines` | `news` | Needs `NEWS_API_KEY` |
+| `tell me a joke` | `jokes` | No key needed |
+| `tell me a fact` | `facts` | No key needed |
+| `wikipedia the moon landing` | `information` | Matched on the `wikipedia` keyword |
+| `note buy milk` | `notes` | Persists to SQLite |
+| `notes` | `notes` | Reads them back |
+| `history` | `history` | Recent commands |
+| `show my analytics` | `analytics` | The full summary |
+| `what do i use most` | `analytics` | Single headline figure |
+| `usage summary` | `analytics` | |
+| `last 7 days` | `analytics` | Range variant |
+| `exit` / `quit` / `bye` / `goodbye` | `system` | Guarded; see below |
+
+Two things worth trying that demonstrate the safety design rather than a
+feature list. Both of these are **refused**, and neither runs the exit tool:
+
+```text
+what does quit mean          # a definition, not an order
+do you want to quit          # a want-frame, not an order
+```
+
+`exit` is only honoured when the sentence is genuinely an imperative. Try
+`if you want to quit now` too: it is refused on purpose, because the guard
+cannot tell a real conditional from a question, and refusing one retry is
+cheaper than terminating the process on the wrong reading.
+
+### Five-minute demo
+
+This is the shortest sequence that shows the whole system. Run the assistant
+in text mode and type the lines in order.
+
+```bash
+python main.py --text
+```
+
+**1 — Two ordinary capabilities.**
+
+```text
+tell me a joke
+what is the weather in london
+```
+
+The first needs no credentials. The second needs `OPENWEATHER_API_KEY`; without
+it the assistant says so in a sentence rather than failing.
+
+**2 — Persistence across commands.**
+
+```text
+note buy milk
+note book the dentist
+notes
+```
+
+`notes` reads back what you just stored, from the same SQLite database the
+dashboard will read later.
+
+**3 — The history of this very session.**
+
+```text
+history
+```
+
+Every command above has been recorded, including the ones that matched no
+tool. This is the write side of the dashboard.
+
+**4 — Analytics over that history.**
+
+```text
+show my analytics
+what do i use most
+```
+
+The same numbers the dashboard will show, produced by the same
+`AnalyticsService`.
+
+**5 — The safety guard, live.**
+
+```text
+what does quit mean
+```
+
+Refused. The assistant does not terminate, because it was asked what the word
+means, not told to leave.
+
+**6 — Leave.**
+
+```text
+exit
+```
+
+Now, in a second terminal:
+
+```bash
+python -m assistant.dashboard.app
+```
+
+Open **http://127.0.0.1:8765**. The interactions from steps 1–6 are already on
+the page, because the dashboard reads the same table the assistant just wrote.
+Filter with `?start=...&end=...`, or ask for the same data as JSON at
+`/api/dashboard`.
+
+**The optional AI layer, without needing an API key.** Say something that is
+conversational rather than a command:
+
+```text
+what do you think about the ocean
+```
+
+With no AI configured — the default — you get the normal
+*"I'm sorry, I didn't understand"* reply, which is the point. Now contrast it
+with:
+
+```text
+I remember you telling me a joke
+```
+
+That one is *rejected by the framing layer* before the AI layer is even
+considered, because it is talking **about** a joke rather than asking for one.
+Even with `AI_ENABLED=true` and a working key, the AI layer is not consulted
+for it. That difference — "unknown" versus "deliberately refused" — is the
+whole safety design, and it is visible in one demo.
+
+To see the AI layer actually answer, set `AI_ENABLED=true` and `AI_API_KEY` in
+`.env` and restart; the first phrase will then get a generated reply. Nothing
+in the test suite needs a key or a network call.
 
 ---
 
