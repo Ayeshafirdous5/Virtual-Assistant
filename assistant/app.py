@@ -613,8 +613,10 @@ def run(ctx: AppContext, router: Router, debug_nlu: bool = False) -> int:
             response = ask_follow_up(ctx, router, response)
         elif not isinstance(response, list) and not response:
             # An empty response means nothing matched; keep the original
-            # wording the assistant used before the router existed.
-            response = MSG_DIDNT_UNDERSTAND
+            # wording the assistant used before the router existed. When the
+            # optional AI layer is available it may answer first, and its
+            # answer replaces this line only in the one case it is allowed.
+            response = ai_reply(ctx, resolution.status, utterance) or MSG_DIDNT_UNDERSTAND
 
         speak_all(ctx, response)
 
@@ -665,6 +667,76 @@ def _run_tool(tool: Tool | None, utterance: str, ctx: AppContext) -> str | list[
 
 
 # ----------------------------------------------------------------------
+# Optional AI response layer
+# ----------------------------------------------------------------------
+def ai_reply(ctx: AppContext, status: str, utterance: str) -> str:
+    """Return an optional AI answer for an utterance nothing else handled.
+
+    This is the single integration point of the AI feature, and it is
+    deliberately narrow. It is reached only from the "empty response" branch of
+    :func:`run`, which the loop enters **after** normalisation, parsing,
+    scoring, the framing guards and the router have all already declined the
+    utterance. Recognised commands therefore never come here.
+
+    Two gates protect the existing behaviour:
+
+    1. **Status gate.** AI is consulted only for
+       :data:`STATUS_NO_MATCH`, the single status meaning "the parser decided
+       this is not a command". The other non-matching statuses are refused on
+       purpose:
+
+       * :data:`STATUS_REJECTED` -- the framing layer judged the sentence to be
+         *talking about* a topic rather than requesting it. Letting AI answer
+         would replace a deliberate safety decision with a generated sentence,
+         so it is excluded.
+       * :data:`STATUS_AMBIGUOUS` -- the app already asked a clarifying
+         question; answering the original utterance would skip that turn.
+       * :data:`STATUS_FALLBACK` -- an internal resolver problem, not user
+         input worth answering.
+
+    2. **Availability gate.** The responder declines when the feature is off,
+       the key is missing, or the provider fails, in which case this returns
+       ``""`` and the caller speaks the ordinary
+       :data:`MSG_DIDNT_UNDERSTAND` reply.
+
+    The returned text is spoken as-is. It is never routed, parsed or executed,
+    so an AI reply can say something but cannot *do* something.
+
+    Args:
+        ctx: the shared application context.
+        status: the resolver status for this utterance.
+        utterance: the raw utterance, passed to the provider unchanged.
+
+    Returns:
+        The AI reply, or ``""`` when AI must not answer or could not.
+    """
+    # Imported here, inside the function, so that starting the assistant loads
+    # no AI code at all when the feature is not in use.
+    from assistant.ai import AIResponder
+
+    responder = ctx.ai
+    if not isinstance(responder, AIResponder) or not responder.enabled:
+        return ""
+
+    # The one status that means "this is not a command I know".
+    if status != STATUS_NO_MATCH:
+        logger.debug(
+            "Not consulting the AI layer: resolver status is %r.", status
+        )
+        return ""
+
+    try:
+        reply = responder.respond(utterance)
+    except Exception as exc:  # noqa: BLE001 - belt and braces; respond() is safe
+        # AIResponder.respond is already written never to raise. This guard
+        # exists so that no future change to it can end the command loop.
+        logger.warning("The AI layer failed unexpectedly; using the fallback: %s", exc)
+        return ""
+
+    return reply or ""
+
+
+# ----------------------------------------------------------------------
 # Entry point
 # ----------------------------------------------------------------------
 def build_context(config: Config, text_mode: bool) -> AppContext:
@@ -686,7 +758,40 @@ def build_context(config: Config, text_mode: bool) -> AppContext:
         )
         ctx.listener = voice_mod.VoiceListener()
 
+    ctx.ai = attach_ai(config)
     return ctx
+
+
+def attach_ai(config: Config) -> Any:
+    """Build the optional AI responder and attach it to the context.
+
+    Attached alongside the database and the speech I/O, and optional in the
+    same way: when the feature is off or no key is configured the context
+    simply gets a disabled responder, and the assistant behaves exactly as it
+    did before the AI layer existed.
+
+    Never raises. A failure to build the responder is logged and produces a
+    disabled one, because an optional feature must not be able to stop the
+    assistant from starting.
+
+    Args:
+        config: supplies the AI settings.
+
+    Returns:
+        An :class:`~assistant.ai.AIResponder`, enabled or disabled.
+    """
+    try:
+        from assistant.ai import build_responder
+
+        responder = build_responder(config)
+    except Exception as exc:  # noqa: BLE001 - optional feature must not block startup
+        logger.warning("AI layer unavailable, continuing without it: %s", exc)
+        from assistant.ai import AIResponder
+
+        return AIResponder(None)
+
+    logger.info("AI response layer %s", "enabled" if responder.enabled else "disabled")
+    return responder
 
 
 def attach_database(ctx: AppContext, config: Config) -> None:

@@ -18,6 +18,7 @@ anywhere in the request path.
 - [Architecture](#architecture)
 - [Project structure](#project-structure)
 - [Setup](#setup)
+- [Optional AI responses](#optional-ai-responses)
 - [Running it](#running-it)
 - [The dashboard](#the-dashboard)
 - [Testing](#testing)
@@ -110,6 +111,25 @@ The important arrow is the one into `AnalyticsService`: the dashboard reads
 the same tables the assistant writes, through the same service, and it can
 never write.
 
+**The optional AI branch.** When intent resolution finds no command at all, the
+assistant *may* ask an AI service for a short conversational reply:
+
+```text
+   no command recognised
+              │
+   ┌──────────▼───────────┐
+   │  AI response layer   │   ai/   OPTIONAL, off by default
+   │  text only, no tools │   ┌──────────────────────────────┐
+   └──────────┬───────────┘   │ disabled / no key / failure │
+              │               │   → the normal "didn't        │
+              └── reply ──────┤     understand" reply         │
+                              └──────────────────────────────┘
+```
+
+It sits *after* the NLU and the router, so a recognised command never reaches
+it, and it can only ever produce text. See
+[Optional AI responses](#optional-ai-responses).
+
 ---
 
 ## Project structure
@@ -136,6 +156,10 @@ assistant/
   storage/
     repositories.py        typed reads over `interactions`
     notes.py               note CRUD over `notes`
+  ai/                      optional AI layer, off unless configured
+    base.py                the AIProvider abstraction (text in, text out)
+    layer.py               AIResponder: availability rules and the fallback
+    openai_compatible.py   the one bundled provider
   tools/                   one module per user-facing capability
   analytics/
     service.py             read-only aggregation; the single source of truth
@@ -197,6 +221,69 @@ copy .env.example .env         # Windows PowerShell
 
 `.env` is git-ignored and must never be committed. `assistant/config.py` is the
 only module that reads the environment, and it never prints or logs a key.
+
+---
+
+## Optional AI responses
+
+**Off by default.** With nothing configured the assistant behaves exactly as it
+does today, and never contacts an AI service.
+
+When the NLU decides an utterance simply is not a command, the assistant can
+optionally ask an AI service for a short conversational reply instead of
+saying it did not understand.
+
+```bash
+# .env
+AI_ENABLED=true
+AI_API_KEY=your_ai_api_key_here
+AI_MODEL=gpt-4o-mini
+AI_BASE_URL=https://api.openai.com/v1
+```
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AI_ENABLED` | `false` | Master switch. Nothing happens unless this is true. |
+| `AI_API_KEY` | *(none)* | Credential. Required, and never logged or stored. |
+| `AI_MODEL` | `gpt-4o-mini` | Model to request. |
+| `AI_BASE_URL` | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint. |
+| `AI_TIMEOUT` | `8` | Seconds to wait before falling back. |
+| `AI_MAX_TOKENS` | `200` | Upper bound on the reply length. |
+
+### What happens when it is off, or fails
+
+In every one of these cases the assistant says its normal
+*"I'm sorry, I didn't understand"* reply, exactly as before, and never
+crashes:
+
+- `AI_ENABLED` is false or unset
+- `AI_API_KEY` is missing or blank
+- the provider is unreachable
+- the request times out
+- the provider returns an error or an unusable reply
+- the provider raises anything at all
+
+### Command routing stays rule-based
+
+This does **not** make the assistant an AI agent.
+
+- The NLU, router and tools are unchanged and always run first.
+- A recognised command is **never** sent to the AI layer.
+- Input the framing guards reject is **never** sent to the AI layer.
+- The AI layer is handed a string and returns a string. It is never given the
+  router, a tool, the speaker or the database, so it **cannot** run a tool,
+  a command, or anything else. Its output is spoken and never executed.
+
+### Design
+
+`assistant/ai/base.py` defines `AIProvider`, a one-method abstraction: a string
+in, a string out. `assistant/ai/layer.py` (`AIResponder`) is the only thing the
+application depends on, and its `respond()` is written never to raise.
+`assistant/ai/openai_compatible.py` is the one bundled provider; it reuses
+`requests`, which is already a dependency, and adds none.
+
+Swapping in a different provider means subclassing `AIProvider` and changing
+one factory function. No other code moves.
 
 ---
 

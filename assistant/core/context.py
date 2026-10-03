@@ -22,11 +22,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from assistant.config import Config, get_config_cached
 from assistant.core.database import Database
 from assistant.logging_config import get_logger
 from assistant.speech.base import Listener, Speaker
+
+if TYPE_CHECKING:  # pragma: no cover - import only needed for type checking
+    from assistant.ai import AIResponder
 
 
 @dataclass
@@ -55,6 +59,12 @@ class AppContext:
     # --- Persistence ---------------------------------------------------------
     # Optional so the assistant still runs with no database at all.
     db: Database | None = None
+
+    # --- Optional AI conversational layer -----------------------------------
+    # Optional in exactly the same way, and for the same reason: the assistant
+    # must run unchanged when the feature is off. ``None`` or a disabled
+    # responder both mean "no AI", so the caller never needs to know which.
+    ai: "AIResponder | None" = None
 
     def has_db(self) -> bool:
         """True when a database handle is attached."""
@@ -136,7 +146,7 @@ class AppContext:
         # safely instead of being dumped, and so optional handles stay short.
         attached = [
             name
-            for name in ("db", "speaker", "listener")
+            for name in ("db", "speaker", "listener", "ai")
             if getattr(self, name) is not None
         ]
         return (
